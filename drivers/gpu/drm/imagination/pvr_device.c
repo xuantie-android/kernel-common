@@ -11,6 +11,7 @@
 #include "pvr_stream.h"
 #include "pvr_vm.h"
 
+#include <drm/drm_gem.h>
 #include <drm/drm_print.h>
 
 #include <linux/bitfield.h>
@@ -763,6 +764,18 @@ pvr_device_init(struct pvr_device *pvr_dev)
 
 	/* Get the platform-specific data based on the compatible string. */
 	pvr_dev->device_data = of_device_get_match_data(dev);
+
+	/*
+	 * Large BOs otherwise fault thousands of individual shmem pages on
+	 * TH1520. Use a device-private mount so other shmem users keep their
+	 * existing policy. Allocation still falls back to smaller folios.
+	 */
+	if (of_device_is_compatible(dev->of_node, "thead,th1520-gpu")) {
+		err = drm_gem_huge_mnt_create(drm_dev, "within_size");
+		if (err)
+			dev_warn(dev, "huge GEM setup failed (%d), using default shmem\n",
+				 err);
+	}
 
 	/* Enable and initialize clocks required for the device to operate. */
 	err = pvr_device_clk_init(pvr_dev);
