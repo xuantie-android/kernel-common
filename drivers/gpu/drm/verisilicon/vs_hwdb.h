@@ -20,6 +20,7 @@ struct vs_chip_identity {
 	u32 customer_id;
 
 	u32 display_count;
+	u32 overlay_count;
 	/*
 	 * The hardware only supports square cursor planes, so this field
 	 * is both the maximum width and height in pixels.

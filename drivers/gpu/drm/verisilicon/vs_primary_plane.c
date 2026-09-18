@@ -7,6 +7,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
@@ -88,7 +89,7 @@ static void vs_primary_plane_atomic_disable(struct drm_plane *plane,
 	unsigned int output = vcrtc->id;
 	struct vs_dc *dc = vcrtc->dc;
 
-	regmap_set_bits(dc->regs, VSDC_FB_CONFIG_EX(output),
+	regmap_clear_bits(dc->regs, VSDC_FB_CONFIG_EX(output),
 			VSDC_FB_CONFIG_EX_FB_EN);
 
 	vs_primary_plane_commit(dc, output);
@@ -165,6 +166,7 @@ static const struct drm_plane_funcs vs_primary_plane_funcs = {
 struct drm_plane *vs_primary_plane_init(struct drm_device *drm_dev, struct vs_dc *dc)
 {
 	struct drm_plane *plane;
+	int ret;
 
 	plane = drmm_universal_plane_alloc(drm_dev, struct drm_plane, dev, 0,
 					   &vs_primary_plane_funcs,
@@ -178,6 +180,9 @@ struct drm_plane *vs_primary_plane_init(struct drm_device *drm_dev, struct vs_dc
 		return plane;
 
 	drm_plane_helper_add(plane, &vs_primary_plane_helper_funcs);
+	ret = drm_plane_create_zpos_immutable_property(plane, 0);
+	if (ret)
+		return ERR_PTR(ret);
 
 	return plane;
 }

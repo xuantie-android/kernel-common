@@ -11,6 +11,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
@@ -250,6 +251,7 @@ struct drm_plane *vs_cursor_plane_init(struct drm_device *drm_dev,
 {
 	int32_t max_cursor_size = dc->identity.max_cursor_size;
 	struct drm_plane *plane;
+	int ret;
 
 	if (drm_WARN_ON_ONCE(drm_dev, max_cursor_size < VSDC_MIN_CURSOR_SIZE ||
 				      max_cursor_size > VSDC_MAX_CURSOR_SIZE))
@@ -267,6 +269,10 @@ struct drm_plane *vs_cursor_plane_init(struct drm_device *drm_dev,
 		return plane;
 
 	drm_plane_helper_add(plane, &vs_cursor_plane_helper_funcs);
+	ret = drm_plane_create_zpos_immutable_property(
+		plane, dc->identity.overlay_count + 1);
+	if (ret)
+		return ERR_PTR(ret);
 
 	return plane;
 }

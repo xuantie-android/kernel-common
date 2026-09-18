@@ -85,5 +85,8 @@ void vs_plane_reset(struct drm_plane *plane);
 
 struct drm_plane *vs_primary_plane_init(struct drm_device *dev, struct vs_dc *dc);
 struct drm_plane *vs_cursor_plane_init(struct drm_device *dev, struct vs_dc *dc);
+struct drm_plane *vs_overlay_plane_init(struct drm_device *dev,
+					struct vs_dc *dc, unsigned int id,
+					u32 possible_crtcs);
 
 #endif /* _VS_PLANE_H_ */

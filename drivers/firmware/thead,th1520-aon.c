@@ -12,13 +12,15 @@
 #include <linux/slab.h>
 
 #define MAX_RX_TIMEOUT (msecs_to_jiffies(3000))
-#define MAX_TX_TIMEOUT 500
 
 struct th1520_aon_chan {
 	struct mbox_chan *ch;
-	struct th1520_aon_rpc_ack_common ack_msg;
 	struct mbox_client cl;
 	struct completion done;
+	void *response;
+	size_t response_size;
+	size_t received_size;
+	int response_status;
 
 	/* make sure only one RPC is performed at a time */
 	struct mutex transaction_lock;
@@ -79,14 +81,23 @@ static void th1520_aon_rx_callback(struct mbox_client *c, void *rx_msg)
 		container_of(c, struct th1520_aon_chan, cl);
 	struct th1520_aon_rpc_msg_hdr *hdr =
 		(struct th1520_aon_rpc_msg_hdr *)rx_msg;
-	u8 recv_size = sizeof(struct th1520_aon_rpc_msg_hdr) + hdr->size;
+	size_t recv_size = sizeof(struct th1520_aon_rpc_msg_hdr) + hdr->size;
 
-	if (recv_size != sizeof(struct th1520_aon_rpc_ack_common)) {
-		dev_err(c->dev, "Invalid ack size, not completing\n");
+	if (!aon_chan->response) {
+		dev_warn(c->dev, "Received an unexpected AON response\n");
 		return;
 	}
 
-	memcpy(&aon_chan->ack_msg, rx_msg, recv_size);
+	if (recv_size > aon_chan->response_size) {
+		dev_err(c->dev, "AON response is too large: %zu > %zu\n",
+			recv_size, aon_chan->response_size);
+		aon_chan->response_status = -EMSGSIZE;
+		complete(&aon_chan->done);
+		return;
+	}
+
+	memcpy(aon_chan->response, rx_msg, recv_size);
+	aon_chan->received_size = recv_size;
 	complete(&aon_chan->done);
 }
 
@@ -97,9 +108,7 @@ static void th1520_aon_rx_callback(struct mbox_client *c, void *rx_msg)
  *
  * This function sends an RPC message to the TH1520 AON subsystem via mailbox.
  * It takes the provided @msg buffer, formats it with version and service flags,
- * then blocks until the RPC completes or times out. The completion is signaled
- * by the `aon_chan->done` completion, which is waited upon for a duration
- * defined by `MAX_RX_TIMEOUT`.
+ * then blocks until the RPC completes or times out.
  *
  * Return:
  * * 0 on success
@@ -107,13 +116,23 @@ static void th1520_aon_rx_callback(struct mbox_client *c, void *rx_msg)
  * * A negative error code if the mailbox send fails or if AON responds with
  *   a non-zero error code (converted via th1520_aon_to_linux_errno()).
  */
-int th1520_aon_call_rpc(struct th1520_aon_chan *aon_chan, void *msg)
+int th1520_aon_call_rpc_response(struct th1520_aon_chan *aon_chan, void *msg,
+				 void *response, size_t response_size)
 {
 	struct th1520_aon_rpc_msg_hdr *hdr = msg;
+	struct th1520_aon_rpc_ack_common *ack = response;
 	int ret;
+
+	if (!response || response_size < sizeof(*ack))
+		return -EINVAL;
 
 	mutex_lock(&aon_chan->transaction_lock);
 	reinit_completion(&aon_chan->done);
+	memset(response, 0, response_size);
+	aon_chan->response = response;
+	aon_chan->response_size = response_size;
+	aon_chan->received_size = 0;
+	aon_chan->response_status = 0;
 
 	RPC_SET_VER(hdr, TH1520_AON_RPC_VERSION);
 	RPC_SET_SVC_ID(hdr, hdr->svc);
@@ -128,18 +147,65 @@ int th1520_aon_call_rpc(struct th1520_aon_chan *aon_chan, void *msg)
 
 	if (!wait_for_completion_timeout(&aon_chan->done, MAX_RX_TIMEOUT)) {
 		dev_err(aon_chan->cl.dev, "RPC send msg timeout\n");
-		mutex_unlock(&aon_chan->transaction_lock);
-		return -ETIMEDOUT;
+		ret = -ETIMEDOUT;
+		goto out;
 	}
 
-	ret = aon_chan->ack_msg.err_code;
+	ret = aon_chan->response_status;
+	if (ret)
+		goto out;
+
+	if (aon_chan->received_size < sizeof(*ack)) {
+		dev_err(aon_chan->cl.dev, "AON response is too short: %zu\n",
+			aon_chan->received_size);
+		ret = -EPROTO;
+		goto out;
+	}
+
+	ret = th1520_aon_to_linux_errno(ack->err_code);
 
 out:
+	aon_chan->response = NULL;
+	aon_chan->response_size = 0;
 	mutex_unlock(&aon_chan->transaction_lock);
 
-	return th1520_aon_to_linux_errno(ret);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(th1520_aon_call_rpc_response);
+
+int th1520_aon_call_rpc(struct th1520_aon_chan *aon_chan, void *msg)
+{
+	struct th1520_aon_rpc_ack_common response;
+
+	return th1520_aon_call_rpc_response(aon_chan, msg, &response,
+					    sizeof(response));
 }
 EXPORT_SYMBOL_GPL(th1520_aon_call_rpc);
+
+/**
+ * th1520_aon_call_rpc_no_reply() - Send an AON RPC that cannot acknowledge
+ * @aon_chan: Pointer to the AON channel structure
+ * @msg: Pointer to the message (RPC payload) that will be sent
+ *
+ * Reset requests destroy the running system before an acknowledgment can be
+ * delivered. Mark those requests as no-reply and submit them without taking a
+ * mutex or sleeping; restart handlers run from an atomic notifier chain.
+ */
+int th1520_aon_call_rpc_no_reply(struct th1520_aon_chan *aon_chan, void *msg)
+{
+	struct th1520_aon_rpc_msg_hdr *hdr = msg;
+	int ret;
+
+	RPC_SET_VER(hdr, TH1520_AON_RPC_VERSION);
+	RPC_SET_SVC_ID(hdr, hdr->svc);
+	RPC_SET_SVC_FLAG_MSG_TYPE(hdr, RPC_SVC_MSG_TYPE_DATA);
+	RPC_SET_SVC_FLAG_ACK_TYPE(hdr, RPC_SVC_MSG_NO_NEED_ACK);
+
+	ret = mbox_send_message(aon_chan->ch, msg);
+
+	return ret < 0 ? ret : 0;
+}
+EXPORT_SYMBOL_GPL(th1520_aon_call_rpc_no_reply);
 
 /**
  * th1520_aon_power_update() - Change power state of a resource via TH1520 AON
@@ -210,8 +276,7 @@ struct th1520_aon_chan *th1520_aon_init(struct device *dev)
 
 	cl = &aon_chan->cl;
 	cl->dev = dev;
-	cl->tx_block = true;
-	cl->tx_tout = MAX_TX_TIMEOUT;
+	cl->tx_block = false;
 	cl->rx_callback = th1520_aon_rx_callback;
 
 	aon_chan->ch = mbox_request_channel_byname(cl, "aon");

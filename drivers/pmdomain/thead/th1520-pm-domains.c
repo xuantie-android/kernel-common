@@ -7,6 +7,7 @@
 
 #include <linux/auxiliary_bus.h>
 #include <linux/firmware/thead/thead,th1520-aon.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
@@ -185,6 +186,24 @@ static int th1520_pd_reboot_init(struct device *dev,
 	return 0;
 }
 
+static int th1520_pd_regulator_init(struct device *dev,
+				    struct th1520_aon_chan *aon_chan)
+{
+	struct auxiliary_device *adev;
+	struct device_node *regulator_node;
+
+	regulator_node = of_get_child_by_name(dev->of_node, "cpu-regulator");
+	if (!regulator_node)
+		return 0;
+	of_node_put(regulator_node);
+
+	adev = devm_auxiliary_device_create(dev, "regulator", aon_chan);
+	if (!adev)
+		return -ENODEV;
+
+	return 0;
+}
+
 static int th1520_pd_probe(struct platform_device *pdev)
 {
 	struct generic_pm_domain **domains;
@@ -248,6 +267,10 @@ static int th1520_pd_probe(struct platform_device *pdev)
 		goto err_clean_provider;
 
 	ret = th1520_pd_reboot_init(dev, aon_chan);
+	if (ret)
+		goto err_clean_provider;
+
+	ret = th1520_pd_regulator_init(dev, aon_chan);
 	if (ret)
 		goto err_clean_provider;
 

@@ -18,8 +18,8 @@ static const struct regmap_config vs_dc_regmap_cfg = {
 	.reg_bits = 32,
 	.val_bits = 32,
 	.reg_stride = sizeof(u32),
-	/* VSDC_OVL_CONFIG_EX(1) */
-	.max_register = 0x2544,
+	/* VSDC_OVL_CONFIG_EX(3) */
+	.max_register = 0x254c,
 };
 
 static const struct of_device_id vs_dc_driver_dt_match[] = {

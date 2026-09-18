@@ -120,6 +120,9 @@ struct th1520_aon_chan *th1520_aon_init(struct device *dev);
 void th1520_aon_deinit(struct th1520_aon_chan *aon_chan);
 
 int th1520_aon_call_rpc(struct th1520_aon_chan *aon_chan, void *msg);
+int th1520_aon_call_rpc_response(struct th1520_aon_chan *aon_chan, void *msg,
+				 void *response, size_t response_size);
+int th1520_aon_call_rpc_no_reply(struct th1520_aon_chan *aon_chan, void *msg);
 int th1520_aon_power_update(struct th1520_aon_chan *aon_chan, u16 rsrc,
 			    bool power_on);
 

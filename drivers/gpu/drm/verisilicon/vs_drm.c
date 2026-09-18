@@ -27,6 +27,7 @@
 #include "vs_dc.h"
 #include "vs_dc_top_regs.h"
 #include "vs_drm.h"
+#include "vs_plane.h"
 
 /* Preserve the userspace ABI used by the TH1520 Android display HAL. */
 #define DRIVER_NAME	"vs-drm"
@@ -90,6 +91,8 @@ int vs_drm_initialize(struct vs_dc *dc, struct platform_device *pdev)
 	struct drm_device *drm;
 	struct vs_crtc *crtc;
 	struct vs_bridge *bridge;
+	struct drm_plane *plane;
+	u32 possible_crtcs = 0;
 	unsigned int i;
 	int ret;
 
@@ -120,6 +123,15 @@ int vs_drm_initialize(struct vs_dc *dc, struct platform_device *pdev)
 			return PTR_ERR(bridge);
 
 		vdrm->crtcs[i] = crtc;
+		possible_crtcs |= drm_crtc_mask(&crtc->base);
+	}
+
+	for (i = 0; i < dc->identity.overlay_count; i++) {
+		plane = vs_overlay_plane_init(drm, dc, i, possible_crtcs);
+		if (IS_ERR(plane)) {
+			drm_err(drm, "Couldn't create overlay plane %u\n", i);
+			return PTR_ERR(plane);
+		}
 	}
 
 	ret = drm_vblank_init(drm, dc->identity.display_count);

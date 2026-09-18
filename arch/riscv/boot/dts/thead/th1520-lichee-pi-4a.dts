@@ -307,11 +307,14 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 	bus-width = <4>;
-	max-frequency = <198000000>;
+	max-frequency = <100000000>;
 	cap-sdio-irq;
 	keep-power-in-suspend;
 	mmc-pwrseq = <&wifi_pwrseq>;
+	no-mmc;
+	no-sd;
 	non-removable;
+	thead,io-fixed-1v8;
 	status = "okay";
 };
 

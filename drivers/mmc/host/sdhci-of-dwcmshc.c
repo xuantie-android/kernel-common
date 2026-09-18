@@ -457,8 +457,8 @@ static void dwcmshc_phy_init(struct sdhci_host *host)
 	u32 rxsel = PHY_PAD_RXSEL_3V3;
 	u32 val;
 
-	if (priv->flags & FLAG_IO_FIXED_1V8 ||
-		host->mmc->ios.timing & MMC_SIGNAL_VOLTAGE_180)
+	if ((priv->flags & FLAG_IO_FIXED_1V8) ||
+	    host->mmc->ios.signal_voltage == MMC_SIGNAL_VOLTAGE_180)
 		rxsel = PHY_PAD_RXSEL_1V8;
 
 	/* deassert phy reset & set tx drive strength */
@@ -527,6 +527,20 @@ static void th1520_sdhci_set_phy(struct sdhci_host *host)
 
 	sdhci_writeb(host, FIELD_PREP(PHY_DLL_CNFG1_SLVDLY_MASK, PHY_DLL_CNFG1_SLVDLY) |
 		     PHY_DLL_CNFG1_WAITCYCLE, PHY_DLL_CNFG1_R);
+}
+
+/*
+ * The TH1520 PHY must be configured before SDHCI enables bus power.  In
+ * particular, fixed-1.8-V SDIO boards otherwise issue their first command
+ * while the PHY pads are still in their reset/default state.
+ */
+static void th1520_sdhci_set_power(struct sdhci_host *host,
+				    unsigned char mode, unsigned short vdd)
+{
+	if (mode != MMC_POWER_OFF)
+		th1520_sdhci_set_phy(host);
+
+	sdhci_set_power(host, mode, vdd);
 }
 
 static void dwcmshc_set_uhs_signaling(struct sdhci_host *host,
@@ -1061,7 +1075,8 @@ static int th1520_init(struct device *dev,
 
 	if (device_property_read_bool(dev, "mmc-ddr-1_8v") ||
 	    device_property_read_bool(dev, "mmc-hs200-1_8v") ||
-	    device_property_read_bool(dev, "mmc-hs400-1_8v"))
+	    device_property_read_bool(dev, "mmc-hs400-1_8v") ||
+	    device_property_read_bool(dev, "thead,io-fixed-1v8"))
 		dwc_priv->flags |= FLAG_IO_FIXED_1V8;
 	else
 		dwc_priv->flags &= ~FLAG_IO_FIXED_1V8;
@@ -2043,6 +2058,7 @@ static const struct sdhci_ops sdhci_dwcmshc_rk35xx_ops = {
 
 static const struct sdhci_ops sdhci_dwcmshc_th1520_ops = {
 	.set_clock		= sdhci_set_clock,
+	.set_power		= th1520_sdhci_set_power,
 	.set_bus_width		= sdhci_set_bus_width,
 	.set_uhs_signaling	= th1520_set_uhs_signaling,
 	.get_max_clock		= dwcmshc_get_max_clock,
@@ -2173,7 +2189,8 @@ static const struct rockchip_pltfm_data sdhci_dwcmshc_rk3588_pdata = {
 static const struct dwcmshc_pltfm_data sdhci_dwcmshc_th1520_pdata = {
 	.pdata = {
 		.ops = &sdhci_dwcmshc_th1520_ops,
-		.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
+		.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN |
+			  SDHCI_QUIRK_SINGLE_POWER_WRITE,
 		.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
 	},
 	.init = th1520_init,

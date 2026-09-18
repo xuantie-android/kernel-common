@@ -232,6 +232,14 @@ config POWER_RESET_TH1520_AON
 	  This driver supports power-off and reset operations for T-Head
 	  TH1520 SoCs running the AON firmware.
 
+config POWER_RESET_TH1520_WDT
+	bool "T-Head TH1520 early watchdog restart fallback"
+	depends on ARCH_THEAD && HAS_IOMEM
+	help
+	  Register an early restart handler which routes WDT0 to the TH1520
+	  always-on reset generator.  This remains available before the AON RPC
+	  and power-domain drivers have probed, including for early boot panics.
+
 config POWER_RESET_TORADEX_EC
 	tristate "Toradex Embedded Controller power-off and reset driver"
 	depends on ARCH_MXC || COMPILE_TEST

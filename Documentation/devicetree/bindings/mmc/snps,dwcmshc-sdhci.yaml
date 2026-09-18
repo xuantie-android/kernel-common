@@ -69,6 +69,12 @@ properties:
     description: Specify the number of delay for tx sampling.
     $ref: /schemas/types.yaml#/definitions/uint8
 
+  thead,io-fixed-1v8:
+    description:
+      The TH1520 SDHCI PHY pads are wired for fixed 1.8 V signalling and
+      must be configured before card enumeration.
+    type: boolean
+
   eswin,hsp-sp-csr:
     $ref: /schemas/types.yaml#/definitions/phandle-array
     items:
