@@ -4,7 +4,7 @@ comment "Verisilicon media platform drivers"
 
 config VIDEO_HANTRO
 	tristate "Hantro VPU driver"
-	depends on ARCH_MXC || ARCH_ROCKCHIP || ARCH_AT91 || ARCH_SUNXI || ARCH_STM32 || COMPILE_TEST
+	depends on ARCH_MXC || ARCH_ROCKCHIP || ARCH_AT91 || ARCH_SUNXI || ARCH_STM32 || ARCH_THEAD || COMPILE_TEST
 	depends on V4L_MEM2MEM_DRIVERS
 	depends on VIDEO_DEV
 	select MEDIA_CONTROLLER
@@ -69,3 +69,14 @@ config VIDEO_HANTRO_STM32MP25
 	default y
 	help
 	  Enable support for STM32MP25 SoCs.
+
+config VIDEO_HANTRO_THEAD
+	bool "Hantro VPU T-Head TH1520 support"
+	depends on VIDEO_HANTRO
+	depends on ARCH_THEAD || COMPILE_TEST
+	default y
+	help
+	  Enable support for the VC8000E encoder in T-Head TH1520 SoCs.
+	  The encoder core is exposed through the TH1520 video subsystem and
+	  uses its dedicated bus, core and peripheral clocks. This driver
+	  provides H.264 encoding through the V4L2 mem-to-mem interface.

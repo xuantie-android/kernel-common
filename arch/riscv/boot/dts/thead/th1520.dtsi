@@ -6,6 +6,7 @@
 
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/clock/thead,th1520-clk-ap.h>
+#include <dt-bindings/clock/thead,th1520-clk-vpsys.h>
 #include <dt-bindings/power/thead,th1520-power.h>
 #include <dt-bindings/reset/thead,th1520-reset.h>
 
@@ -38,6 +39,9 @@
 			d-cache-sets = <512>;
 			next-level-cache = <&l2_cache>;
 			mmu-type = "riscv,sv39";
+			operating-points-v2 = <&cpu_opp>;
+			clocks = <&clk CLK_C910>;
+			cpu-supply = <&cpu_reg>;
 
 			cpu0_intc: interrupt-controller {
 				compatible = "riscv,cpu-intc";
@@ -65,6 +69,9 @@
 			d-cache-sets = <512>;
 			next-level-cache = <&l2_cache>;
 			mmu-type = "riscv,sv39";
+			operating-points-v2 = <&cpu_opp>;
+			clocks = <&clk CLK_C910>;
+			cpu-supply = <&cpu_reg>;
 
 			cpu1_intc: interrupt-controller {
 				compatible = "riscv,cpu-intc";
@@ -92,6 +99,9 @@
 			d-cache-sets = <512>;
 			next-level-cache = <&l2_cache>;
 			mmu-type = "riscv,sv39";
+			operating-points-v2 = <&cpu_opp>;
+			clocks = <&clk CLK_C910>;
+			cpu-supply = <&cpu_reg>;
 
 			cpu2_intc: interrupt-controller {
 				compatible = "riscv,cpu-intc";
@@ -119,6 +129,9 @@
 			d-cache-sets = <512>;
 			next-level-cache = <&l2_cache>;
 			mmu-type = "riscv,sv39";
+			operating-points-v2 = <&cpu_opp>;
+			clocks = <&clk CLK_C910>;
+			cpu-supply = <&cpu_reg>;
 
 			cpu3_intc: interrupt-controller {
 				compatible = "riscv,cpu-intc";
@@ -134,6 +147,31 @@
 			cache-size = <1048576>;
 			cache-sets = <1024>;
 			cache-unified;
+		};
+	};
+
+	cpu_opp: opp-table-cpu {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-300000000 {
+			opp-hz = /bits/ 64 <300000000>;
+			opp-microvolt = <600000>;
+		};
+
+		opp-800000000 {
+			opp-hz = /bits/ 64 <800000000>;
+			opp-microvolt = <700000>;
+		};
+
+		opp-1500000000 {
+			opp-hz = /bits/ 64 <1500000000>;
+			opp-microvolt = <800000>;
+		};
+
+		opp-1848000000 {
+			opp-hz = /bits/ 64 <1848000000>;
+			opp-microvolt = <1000000>;
 		};
 	};
 
@@ -244,6 +282,26 @@
 		#clock-cells = <0>;
 	};
 
+	venc_opp_table: opp-table-venc {
+		compatible = "operating-points-v2";
+
+		opp-200000000 {
+			opp-hz = /bits/ 64 <200000000>;
+		};
+
+		opp-250000000 {
+			opp-hz = /bits/ 64 <250000000>;
+		};
+
+		opp-333300000 {
+			opp-hz = /bits/ 64 <333300000>;
+		};
+
+		opp-500000000 {
+			opp-hz = /bits/ 64 <500000000>;
+		};
+	};
+
 	stmmac_axi_config: stmmac-axi-config {
 		snps,wr_osr_lmt = <15>;
 		snps,rd_osr_lmt = <15>;
@@ -257,6 +315,14 @@
 		resets = <&rst TH1520_RESET_ID_GPU_CLKGEN>;
 		reset-names = "gpu-clkgen";
 		#power-domain-cells = <1>;
+
+		cpu_reg: cpu-regulator {
+			regulator-name = "vdd-cpu";
+			regulator-min-microvolt = <600000>;
+			regulator-max-microvolt = <1000000>;
+			regulator-boot-on;
+			regulator-always-on;
+		};
 	};
 
 	soc {
@@ -313,6 +379,25 @@
 			clock-names = "baudclk", "apb_pclk";
 			reg-shift = <2>;
 			reg-io-width = <4>;
+			status = "disabled";
+		};
+
+		usb: usb@ffe7040000 {
+			compatible = "thead,th1520-dwc3";
+			reg = <0xff 0xe7040000 0x0 0x10000>,
+			      <0xff 0xec03f000 0x0 0x1000>,
+			      <0xff 0xfc02d104 0x0 0x4>;
+			reg-names = "dwc3", "usb3-drd", "clock-gate";
+			interrupts = <68 IRQ_TYPE_LEVEL_HIGH>;
+			resets = <&rst_misc TH1520_RESET_ID_USB3_APB>,
+				 <&rst_misc TH1520_RESET_ID_USB3_PHY>,
+				 <&rst_misc TH1520_RESET_ID_USB3_VCC>;
+			reset-names = "apb", "phy", "vcc";
+			dr_mode = "otg";
+			usb-role-switch;
+			role-switch-default-mode = "peripheral";
+			maximum-speed = "super-speed";
+			snps,usb3_lpm_capable;
 			status = "disabled";
 		};
 
@@ -520,6 +605,16 @@
 			status = "disabled";
 		};
 
+		i2c3: i2c@ffec014000 {
+			compatible = "thead,th1520-i2c", "snps,designware-i2c";
+			reg = <0xff 0xec014000 0x0 0x4000>;
+			interrupts = <47 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk CLK_I2C3>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
 		pwm: pwm@ffec01c000 {
 			compatible = "thead,th1520-pwm";
 			reg = <0xff 0xec01c000 0x0 0x4000>;
@@ -537,6 +632,31 @@
 			compatible = "thead,th1520-reset-vp";
 			reg = <0xff 0xecc30000 0x0 0x14>;
 			#reset-cells = <1>;
+		};
+
+		vpsys_clk: clock-controller@ffecc30020 {
+			compatible = "thead,th1520-clk-vpsys";
+			reg = <0xff 0xecc30020 0x0 0x4>;
+			#clock-cells = <1>;
+		};
+
+		vidmem: video-memory@ffecc08000 {
+			compatible = "thead,light-vidmem";
+			reg = <0xff 0xecc08000 0x0 0x1000>;
+			status = "disabled";
+		};
+
+		venc: video-encoder@ffecc10000 {
+			compatible = "xuantie,th1520-vc8000e";
+			reg = <0xff 0xecc10000 0x0 0x8000>;
+			interrupts = <133 IRQ_TYPE_LEVEL_HIGH>;
+			power-domains = <&aon TH1520_VENC_PD>;
+			clocks = <&vpsys_clk TH1520_VPSYS_VENC_ACLK>,
+				 <&vpsys_clk TH1520_VPSYS_VENC_CCLK>,
+				 <&vpsys_clk TH1520_VPSYS_VENC_PCLK>;
+			clock-names = "aclk", "cclk", "pclk";
+			operating-points-v2 = <&venc_opp_table>;
+			status = "disabled";
 		};
 
 		clk: clock-controller@ffef010000 {

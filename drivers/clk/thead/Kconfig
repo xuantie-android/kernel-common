@@ -11,3 +11,12 @@ config CLK_THEAD_TH1520_AP
 	  on the T-HEAD TH1520 SoC. This includes configuration of
 	  both CPU PLLs, both DPU PLLs as well as the GMAC, VIDEO,
 	  and TEE PLLs.
+
+config CLK_THEAD_TH1520_VPSYS
+	bool "T-HEAD TH1520 video-processing gate clocks"
+	depends on ARCH_THEAD || COMPILE_TEST
+	depends on COMMON_CLK
+	default ARCH_THEAD
+	help
+	  Register the ACLK, CCLK and PCLK gates used by the TH1520 video
+	  encoder. The parent VENC clock is provided by the AP clock controller.

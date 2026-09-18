@@ -2,7 +2,7 @@
 /*
  * Hantro VPU codec driver
  *
- * Copyright (C) 2025-2026 Paul Kocialkowski <paulk at sys-base.io>
+ * Copyright (C) 2025-2026 Paul Kocialkowski <paulk@sys-base.io>
  */
 
 #include "hantro.h"

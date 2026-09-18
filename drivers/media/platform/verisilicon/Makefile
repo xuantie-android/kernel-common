@@ -44,3 +44,6 @@ hantro-vpu-$(CONFIG_VIDEO_HANTRO_SUNXI) += \
 
 hantro-vpu-$(CONFIG_VIDEO_HANTRO_STM32MP25) += \
 		stm32mp25_vpu_hw.o
+
+hantro-vpu-$(CONFIG_VIDEO_HANTRO_THEAD) += \
+		thead_vpu_hw.o

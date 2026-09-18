@@ -3,6 +3,8 @@
  * Copyright (C) 2023 Jisheng Zhang <jszhang@kernel.org>
  */
 
+#include <dt-bindings/gpio/gpio.h>
+
 #include "th1520-lichee-module-4a.dtsi"
 
 / {
@@ -16,6 +18,7 @@
 		gpio3 = &gpio3;
 		gpio4 = &gpio4;
 		gpio5 = &aogpio;
+		i2c3 = &i2c3;
 		serial0 = &uart0;
 		serial1 = &uart1;
 		serial2 = &uart2;
@@ -94,6 +97,55 @@
 		cooling-levels = <0 66 196 255>;
 	};
 
+	hub_1v2: regulator-hub-1v2 {
+		compatible = "regulator-fixed";
+		regulator-name = "HUB_1V2";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		gpio = <&ioexp3 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	hub_5v: regulator-hub-5v {
+		compatible = "regulator-fixed";
+		regulator-name = "HUB_5V";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&ioexp3 3 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	vcc5v_usb: regulator-vcc5v-usb {
+		compatible = "regulator-fixed";
+		regulator-name = "VCC5V_USB";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio1 22 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+};
+
+&i2c3 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c3_pins>;
+	status = "okay";
+
+	ioexp3: gpio@18 {
+		compatible = "nxp,pca9557";
+		reg = <0x18>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		gpio-line-names = "tp0_rst",
+				  "",
+				  "hub_1v2",
+				  "hub_5v",
+				  "vdd28_tp0",
+				  "vdd33_lcd0",
+				  "vdd18_lcd0",
+				  "lcd0_reset";
+	};
 };
 
 &padctrl0_apsys {
@@ -105,6 +157,18 @@
 			drive-strength = <25>;
 			input-disable;
 			input-schmitt-disable;
+			slew-rate = <0>;
+		};
+	};
+
+	i2c3_pins: i2c3-0 {
+		i2c-pins {
+			pins = "I2C3_SCL", "I2C3_SDA";
+			function = "i2c";
+			bias-pull-up = <2100>;
+			drive-strength = <7>;
+			input-enable;
+			input-schmitt-enable;
 			slew-rate = <0>;
 		};
 	};
@@ -144,6 +208,27 @@
 	hdmi_out_con: endpoint {
 		remote-endpoint = <&hdmi_con_in>;
 	};
+};
+
+&usb {
+	hubswitch-gpios = <&aogpio 4 GPIO_ACTIVE_HIGH>;
+	vbus-supply = <&vcc5v_usb>;
+	hub1v2-supply = <&hub_1v2>;
+	hub5v-supply = <&hub_5v>;
+	status = "okay";
+};
+
+&venc {
+	status = "okay";
+};
+
+&vidmem {
+	status = "okay";
+};
+
+/* The Rogue DDK delegates the TH1520-specific clock/reset order to pwrseq. */
+&gpu {
+	status = "okay";
 };
 
 &uart0 {
