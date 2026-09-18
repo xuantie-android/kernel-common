@@ -89,6 +89,7 @@
 static void drm_gem_huge_mnt_free(struct drm_device *dev, void *data)
 {
 	kern_unmount(dev->huge_mnt);
+	dev->huge_mnt = NULL;
 }
 
 /**
@@ -113,6 +114,7 @@ int drm_gem_huge_mnt_create(struct drm_device *dev, const char *value)
 {
 	struct file_system_type *type;
 	struct fs_context *fc;
+	struct vfsmount *mnt;
 	int ret;
 
 	if (unlikely(drm_gem_get_huge_mnt(dev)))
@@ -122,19 +124,28 @@ int drm_gem_huge_mnt_create(struct drm_device *dev, const char *value)
 	if (unlikely(!type))
 		return -EOPNOTSUPP;
 	fc = fs_context_for_mount(type, SB_KERNMOUNT);
+	put_filesystem(type);
 	if (IS_ERR(fc))
 		return PTR_ERR(fc);
 	ret = vfs_parse_fs_string(fc, "source", "tmpfs");
 	if (unlikely(ret))
-		return -ENOPARAM;
+		goto out_put_context;
 	ret = vfs_parse_fs_string(fc, "huge", value);
 	if (unlikely(ret))
-		return -ENOPARAM;
+		goto out_put_context;
 
-	dev->huge_mnt = fc_mount_longterm(fc);
+	mnt = fc_mount_longterm(fc);
+	if (IS_ERR(mnt)) {
+		ret = PTR_ERR(mnt);
+		goto out_put_context;
+	}
+
+	dev->huge_mnt = mnt;
+	ret = drmm_add_action_or_reset(dev, drm_gem_huge_mnt_free, NULL);
+
+out_put_context:
 	put_fs_context(fc);
-
-	return drmm_add_action_or_reset(dev, drm_gem_huge_mnt_free, NULL);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_gem_huge_mnt_create);
 #endif
