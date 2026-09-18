@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config SND_SOC_XUANTIE
+	tristate "ASoC support for XuanTie SoCs"
+	depends on ARCH_THEAD || COMPILE_TEST
+	help
+	  Say Y or M to enable XuanTie SoC audio interfaces.
+
+config SND_SOC_XUANTIE_TH1520_I2S
+	tristate "XuanTie TH1520 2-channel I2S support"
+	depends on SND_SOC_XUANTIE
+	select SND_SOC_GENERIC_DMAENGINE_PCM
+	help
+	  Enable the TH1520 two-channel I2S CPU DAI.
+
+config SND_SOC_XUANTIE_TH1520_HDMI_PCM
+	tristate "XuanTie TH1520 HDMI PCM support"
+	depends on SND_SOC_XUANTIE
+	help
+	  Enable the TH1520 HDMI PCM codec used by the AP I2S interface.

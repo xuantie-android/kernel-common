@@ -672,6 +672,20 @@
 			status = "okay";
 		};
 
+		ap_i2s: i2s@ffe7034000 {
+			compatible = "xuantie,th1520-ap-i2s",
+				     "xuantie,th1520-i2s";
+			reg = <0xff 0xe7034000 0x0 0x4000>;
+			interrupts = <70 IRQ_TYPE_LEVEL_HIGH>;
+			dmas = <&dmac0 35>, <&dmac0 40>;
+			dma-names = "tx", "rx";
+			clocks = <&clk_vo CLK_HDMI_I2S>;
+			clock-names = "pclk";
+			resets = <&rst_ap TH1520_RESET_ID_PERI_I2S>;
+			#sound-dai-cells = <1>;
+			status = "disabled";
+		};
+
 		clk: clock-controller@ffef010000 {
 			compatible = "thead,th1520-clk-ap";
 			reg = <0xff 0xef010000 0x0 0x1000>;

@@ -43,6 +43,26 @@
 		};
 	};
 
+	hdmi_audio_codec: hdmi-audio-codec {
+		compatible = "xuantie,th1520-hdmi-pcm";
+		#sound-dai-cells = <0>;
+		sound-name-prefix = "HDMI";
+	};
+
+	hdmi_sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "HDMI";
+		simple-audio-card,format = "i2s";
+
+		simple-audio-card,cpu {
+			sound-dai = <&ap_i2s 1>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&hdmi_audio_codec>;
+		};
+	};
+
 	thermal-zones {
 		cpu-thermal {
 			polling-delay = <1000>;
@@ -197,6 +217,14 @@
 };
 
 &dpu {
+	status = "okay";
+};
+
+&ap_i2s {
+	status = "okay";
+};
+
+&dmac0 {
 	status = "okay";
 };
 
