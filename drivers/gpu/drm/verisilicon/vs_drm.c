@@ -28,7 +28,8 @@
 #include "vs_dc_top_regs.h"
 #include "vs_drm.h"
 
-#define DRIVER_NAME	"verisilicon"
+/* Preserve the userspace ABI used by the TH1520 Android display HAL. */
+#define DRIVER_NAME	"vs-drm"
 #define DRIVER_DESC	"Verisilicon DC-series display controller driver"
 #define DRIVER_MAJOR	1
 #define DRIVER_MINOR	0
