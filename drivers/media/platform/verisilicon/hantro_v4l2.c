@@ -362,6 +362,8 @@ static int hantro_try_fmt(const struct hantro_ctx *ctx,
 	const struct hantro_fmt *vpu_fmt;
 	bool capture = V4L2_TYPE_IS_CAPTURE(type);
 	bool coded;
+	u32 requested_y_stride = pix_mp->plane_fmt[0].bytesperline;
+	u32 requested_uv_stride = pix_mp->plane_fmt[1].bytesperline;
 
 	coded = capture == ctx->is_encoder;
 
@@ -397,6 +399,42 @@ static int hantro_try_fmt(const struct hantro_ctx *ctx,
 		/* Fill remaining fields */
 		v4l2_fill_pixfmt_mp(pix_mp, fmt->fourcc, pix_mp->width,
 				    pix_mp->height);
+		/* v4l2_fill_pixfmt_mp() creates tightly packed rows. VC8000E
+		 * has independent input-stride registers, so preserve userspace's
+		 * allocator pitch rather than silently reading padding as pixels.
+		 * Keep visible/coded width unchanged for crop and SPS generation.
+		 */
+		if (ctx->is_encoder && ctx->dev->variant->enc_nv12_stride &&
+		    (fmt->fourcc == V4L2_PIX_FMT_NV12 ||
+		     fmt->fourcc == V4L2_PIX_FMT_NV12M)) {
+			u32 y_stride, uv_stride;
+			u64 y_size, uv_size;
+
+			/* swreg210/211 contain 20-bit strides. Check before ALIGN. */
+			if (requested_y_stride > GENMASK(19, 4) ||
+			    (fmt->fourcc == V4L2_PIX_FMT_NV12M &&
+			     requested_uv_stride > GENMASK(19, 4)))
+				return -EINVAL;
+			y_stride = ALIGN(max(requested_y_stride,
+					     pix_mp->plane_fmt[0].bytesperline), 16);
+			uv_stride = y_stride;
+			if (fmt->fourcc == V4L2_PIX_FMT_NV12M)
+				uv_stride = ALIGN(max(requested_uv_stride ?
+						      requested_uv_stride : y_stride,
+						      pix_mp->plane_fmt[1].bytesperline), 16);
+			y_size = (u64)y_stride * pix_mp->height;
+			uv_size = (u64)uv_stride * DIV_ROUND_UP(pix_mp->height, 2);
+			if (y_size + uv_size > U32_MAX)
+				return -EINVAL;
+			pix_mp->plane_fmt[0].bytesperline = y_stride;
+			pix_mp->plane_fmt[0].sizeimage = y_size;
+			if (fmt->fourcc == V4L2_PIX_FMT_NV12) {
+				pix_mp->plane_fmt[0].sizeimage += uv_size;
+			} else {
+				pix_mp->plane_fmt[1].bytesperline = uv_stride;
+				pix_mp->plane_fmt[1].sizeimage = uv_size;
+			}
+		}
 		if (ctx->vpu_src_fmt->fourcc == V4L2_PIX_FMT_H264_SLICE &&
 		    !hantro_needs_postproc(ctx, fmt))
 			pix_mp->plane_fmt[0].sizeimage +=

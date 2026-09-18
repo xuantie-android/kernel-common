@@ -116,6 +116,7 @@ static const char * const th1520_vc8000e_clk_names[] = {
 };
 
 const struct hantro_variant th1520_vc8000e_variant = {
+	.enc_nv12_stride = 1,
 	.enc_offset = 0x1000,
 	.enc_fmts = th1520_vc8000e_fmts,
 	.num_enc_fmts = ARRAY_SIZE(th1520_vc8000e_fmts),
