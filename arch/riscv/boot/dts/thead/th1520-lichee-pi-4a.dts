@@ -18,6 +18,7 @@
 		gpio3 = &gpio3;
 		gpio4 = &gpio4;
 		gpio5 = &aogpio;
+		i2c1 = &i2c1;
 		i2c3 = &i2c3;
 		serial0 = &uart0;
 		serial1 = &uart1;
@@ -61,6 +62,12 @@
 		simple-audio-card,codec {
 			sound-dai = <&hdmi_audio_codec>;
 		};
+	};
+
+	wifi_pwrseq: wifi-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&ioexp2 4 GPIO_ACTIVE_LOW>;
+		post-power-on-delay-ms = <200>;
 	};
 
 	thermal-zones {
@@ -146,6 +153,20 @@
 
 };
 
+&i2c1 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	status = "okay";
+
+	ioexp2: gpio@18 {
+		compatible = "nxp,pca9557";
+		reg = <0x18>;
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+};
+
 &i2c3 {
 	clock-frequency = <400000>;
 	pinctrl-names = "default";
@@ -165,6 +186,20 @@
 				  "vdd33_lcd0",
 				  "vdd18_lcd0",
 				  "lcd0_reset";
+	};
+};
+
+&padctrl1_apsys {
+	i2c1_pins: i2c1-0 {
+		i2c-pins {
+			pins = "I2C1_SCL", "I2C1_SDA";
+			function = "i2c";
+			bias-pull-up = <2100>;
+			drive-strength = <7>;
+			input-enable;
+			input-schmitt-enable;
+			slew-rate = <0>;
+		};
 	};
 };
 
@@ -214,6 +249,18 @@
 			slew-rate = <0>;
 		};
 	};
+};
+
+&sdio1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	bus-width = <4>;
+	max-frequency = <198000000>;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	mmc-pwrseq = <&wifi_pwrseq>;
+	non-removable;
+	status = "okay";
 };
 
 &dpu {

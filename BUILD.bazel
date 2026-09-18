@@ -358,6 +358,7 @@ kernel_build(
             "drivers/net/ethernet/stmicro/stmmac/stmmac-platform.ko",
             "drivers/net/ethernet/stmicro/stmmac/stmmac.ko",
             "drivers/net/pcs/pcs_xpcs.ko",
+            "drivers/staging/rtl8723bs/r8723bs.ko",
             "drivers/power/sequencing/pwrseq-thead-gpu.ko",
             "drivers/media/platform/verisilicon/hantro-vpu.ko",
             "drivers/media/v4l2-core/v4l2-h264-enc-rc.ko",
