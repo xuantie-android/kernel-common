@@ -197,6 +197,28 @@
 				  "vdd18_lcd0",
 				  "lcd0_reset";
 	};
+
+	/* U3-bypassed TL060 adapter; do not reset the shared display/touch line. */
+	touchscreen@48 {
+		compatible = "samsung,s6d6ft0";
+		reg = <0x48>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&tl060_touch_irq_pins>;
+		interrupt-parent = <&aogpio>;
+		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
+		irq-gpios = <&aogpio 3 GPIO_ACTIVE_LOW>;
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2160>;
+	};
+};
+
+&padctrl_aosys {
+	tl060_touch_irq_pins: tl060-touch-irq-pins {
+		pins = "CPU_JTG_TMS"; /* AON GPIO3, board TP0_INT / GPIO00. */
+		function = "gpio";
+		bias-pull-up = <48000>;
+		input-enable;
+	};
 };
 
 &padctrl1_apsys {

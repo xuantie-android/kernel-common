@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
+obj-$(CONFIG_TOUCHSCREEN_S6D6FT0) += s6d6ft0.o
 #
 # Makefile for the touchscreen drivers.
 #

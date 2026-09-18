@@ -355,6 +355,7 @@ kernel_build(
             "drivers/gpu/drm/scheduler/gpu-sched.ko",
             "drivers/gpu/drm/verisilicon/verisilicon-dc.ko",
             "drivers/pwm/th1520_pwm0_diag.ko",
+            "drivers/input/touchscreen/s6d6ft0.ko",
             "drivers/net/ethernet/stmicro/stmmac/dwmac-thead.ko",
             "drivers/net/ethernet/stmicro/stmmac/stmmac-platform.ko",
             "drivers/net/ethernet/stmicro/stmmac/stmmac.ko",
