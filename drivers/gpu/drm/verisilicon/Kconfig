@@ -8,6 +8,7 @@ config DRM_VERISILICON_DC
 	select DRM_DISPLAY_HELPER
 	select DRM_GEM_DMA_HELPER
 	select DRM_KMS_HELPER
+	select DRM_MIPI_DSI
 	select REGMAP_MMIO
 	select VIDEOMODE_HELPERS
 	help

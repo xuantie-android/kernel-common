@@ -4,6 +4,7 @@
  */
 
 #include <linux/of.h>
+#include <linux/module.h>
 #include <linux/regmap.h>
 
 #include <uapi/linux/media-bus-format.h>
@@ -22,6 +23,13 @@
 #include "vs_bridge_regs.h"
 #include "vs_crtc.h"
 #include "vs_dc.h"
+#include "vs_th1520_dsi0.h"
+
+/* Opt-in fixed-board bring-up until the DSI host has standard DT bindings.
+ * Never replace an existing downstream graph or change HDMI output 1. */
+static bool lpi4a_dsi0;
+module_param(lpi4a_dsi0, bool, 0400);
+MODULE_PARM_DESC(lpi4a_dsi0, "Enable fixed TL060FVXS07 DSI0 panel on otherwise unused LPi4A output 0");
 
 static int vs_bridge_attach(struct drm_bridge *bridge,
 			    struct drm_encoder *encoder,
@@ -299,6 +307,14 @@ struct vs_bridge *vs_bridge_init(struct drm_device *drm_dev,
 	intf = vs_bridge_detect_output_interface(drm_dev->dev->of_node,
 						 output);
 	if (intf == -ENODEV) {
+		if (output == 0 && lpi4a_dsi0 &&
+		    of_machine_is_compatible("sipeed,lichee-pi-4a")) {
+			next = vs_th1520_dsi0_create(drm_dev->dev);
+			if (IS_ERR(next))
+				return ERR_CAST(next);
+			intf = VSDC_OUTPUT_INTERFACE_DPI;
+			goto downstream_ready;
+		}
 		drm_dbg(drm_dev, "Skipping output %u\n", output);
 		return NULL;
 	}
@@ -314,6 +330,7 @@ struct vs_bridge *vs_bridge_init(struct drm_device *drm_dev,
 		return ERR_PTR(ret);
 	}
 
+downstream_ready:
 	if (intf == VSDC_OUTPUT_INTERFACE_DPI)
 		bridge_funcs = &vs_dpi_bridge_funcs;
 	else
