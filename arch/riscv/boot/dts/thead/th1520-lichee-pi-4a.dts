@@ -166,6 +166,14 @@
 		reg = <0x18>;
 		gpio-controller;
 		#gpio-cells = <2>;
+
+		/* AIC8800D BT_REG_ON; Wi-Fi's independent reset remains on P4. */
+		bt-reg-on-hog {
+			gpio-hog;
+			gpios = <5 GPIO_ACTIVE_HIGH>;
+			output-high;
+			line-name = "bt-reg-on";
+		};
 	};
 };
 
@@ -192,6 +200,26 @@
 };
 
 &padctrl1_apsys {
+	uart4_pins: uart4-0 {
+		tx-pins {
+			pins = "UART4_TXD", "UART4_RTSN";
+			function = "uart";
+			bias-disable;
+			drive-strength = <7>;
+			input-disable;
+			input-schmitt-disable;
+			slew-rate = <0>;
+		};
+		rx-pins {
+			pins = "UART4_RXD", "UART4_CTSN";
+			function = "uart";
+			bias-disable;
+			drive-strength = <7>;
+			input-enable;
+			input-schmitt-enable;
+			slew-rate = <0>;
+		};
+	};
 	i2c1_pins: i2c1-0 {
 		i2c-pins {
 			pins = "I2C1_SCL", "I2C1_SDA";
@@ -311,5 +339,12 @@
 &uart0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart0_pins>;
+	status = "okay";
+};
+
+&uart4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4_pins>;
+	uart-has-rtscts;
 	status = "okay";
 };
