@@ -50,6 +50,8 @@ CONFIG_FB=y
 CONFIG_FB_VIRTUAL=y
 # Use the upstream DRM UAPI with Mesa's open-source PVR Vulkan driver.
 CONFIG_DRM_POWERVR=m
+# Use the GC620 2D engine for DMA-BUF blits and RGB/YUV conversion.
+CONFIG_DRM_ETNAVIV=m
 # CONFIG_DRM_POWERVR_ROGUE is not set
 # Mainline TH1520 display pipeline.  Keep these modular during bring-up so the
 # KMS card can be validated on a running board before it is made built-in.

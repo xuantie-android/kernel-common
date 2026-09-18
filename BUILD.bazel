@@ -318,6 +318,74 @@ common_kernel(
     visibility = ["//visibility:public"],
 )
 
+kernel_build(
+    name = "lpi4a",
+    srcs = [":kernel_riscv64_sources"],
+    outs = [
+        "Image",
+        "System.map",
+        "arch/riscv/boot/dts/thead/th1520-lichee-pi-4a.dtb",
+        "modules.builtin",
+        "modules.builtin.modinfo",
+        "vmlinux",
+        "vmlinux.symvers",
+    ],
+    arch = "riscv64",
+    defconfig = "arch/riscv/configs/gki_defconfig",
+    generate_out_targets = False,
+    kcflags = COMMON_KCFLAGS,
+    make_goals = [
+        "Image",
+        "modules",
+        "thead/th1520-lichee-pi-4a.dtb",
+    ],
+    makefile = ":Makefile",
+    module_outs = (
+        get_gki_modules_list("riscv64") +
+        get_kunit_modules_list("riscv64") + [
+            "drivers/gpu/drm/bridge/display-connector.ko",
+            "drivers/gpu/drm/bridge/synopsys/dw-hdmi.ko",
+            "drivers/gpu/drm/bridge/th1520-dw-hdmi.ko",
+            "drivers/gpu/drm/display/drm_display_helper.ko",
+            "drivers/gpu/drm/drm_dma_helper.ko",
+            "drivers/gpu/drm/drm_exec.ko",
+            "drivers/gpu/drm/drm_gpuvm.ko",
+            "drivers/gpu/drm/etnaviv/etnaviv.ko",
+            "drivers/gpu/drm/imagination/powervr.ko",
+            "drivers/gpu/drm/scheduler/gpu-sched.ko",
+            "drivers/gpu/drm/verisilicon/verisilicon-dc.ko",
+            "drivers/net/ethernet/stmicro/stmmac/dwmac-thead.ko",
+            "drivers/net/ethernet/stmicro/stmmac/stmmac-platform.ko",
+            "drivers/net/ethernet/stmicro/stmmac/stmmac.ko",
+            "drivers/net/pcs/pcs_xpcs.ko",
+            "drivers/power/sequencing/pwrseq-thead-gpu.ko",
+            "drivers/media/platform/verisilicon/hantro-vpu.ko",
+            "drivers/media/v4l2-core/v4l2-h264-enc-rc.ko",
+            "drivers/media/v4l2-core/v4l2-h264-enc-rbsp.ko",
+            "drivers/media/v4l2-core/v4l2-h264-enc.ko",
+            "drivers/media/v4l2-core/v4l2-h264.ko",
+            "drivers/media/v4l2-core/v4l2-jpeg.ko",
+            "drivers/media/v4l2-core/v4l2-vp9.ko",
+        ]
+    ),
+    pahole = ":pahole",
+    pre_defconfig_fragments = ["arch/riscv/configs/lpi4a_gki.fragment"],
+    visibility = ["//visibility:public"],
+)
+
+pkg_files(
+    name = "lpi4a_dist_files",
+    srcs = [":lpi4a"],
+    strip_prefix = strip_prefix.files_only(),
+    visibility = ["//visibility:private"],
+)
+
+pkg_install(
+    name = "lpi4a_dist",
+    srcs = [":lpi4a_dist_files"],
+    destdir = "out/lpi4a/dist",
+)
+
 fail_rule(
     name = "kernel_x86_64_debug",
     message = """\
