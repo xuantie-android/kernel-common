@@ -746,7 +746,15 @@ try_again:
 			retries--;
 			goto try_again;
 		} else if (err) {
-			ocr &= ~R4_18V_PRESENT;
+			/*
+			 * mmc_set_uhs_voltage() power cycles the card after a
+			 * command or signalling failure.  Restart the SDIO init
+			 * sequence before retrying without S18R; continuing with
+			 * CMD3 here would address a freshly reset card before CMD5.
+			 */
+			mmc_sdio_pre_init(host, ocr_card, card);
+			retries = 0;
+			goto try_again;
 		}
 	}
 
