@@ -316,10 +316,17 @@
 };
 
 &usb {
+	/*
+	 * Type-C is the directly routed, externally powered USB2 gadget port.
+	 * The Type-A VL817 rails are not suppliers of this path. Coupling them
+	 * here defers ADB forever if the shared touch/expander I2C bus fails.
+	 * A host-mode configuration must restore the hub/VBUS supplies below.
+	 */
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	/delete-property/ usb-role-switch;
+	/delete-property/ role-switch-default-mode;
 	hubswitch-gpios = <&aogpio 4 GPIO_ACTIVE_HIGH>;
-	vbus-supply = <&vcc5v_usb>;
-	hub1v2-supply = <&hub_1v2>;
-	hub5v-supply = <&hub_5v>;
 	status = "okay";
 };
 
