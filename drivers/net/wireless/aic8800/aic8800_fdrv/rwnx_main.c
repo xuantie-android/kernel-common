@@ -4256,8 +4256,16 @@ static int rwnx_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 #endif
 
 	/* Get STA on which management frame has to be sent */
-	rwnx_sta = rwnx_retrieve_sta(rwnx_hw, rwnx_vif, mgmt->da,
-								 mgmt->frame_control, ap);
+	/* External SAE auth must use the unknown-STA queue initialized by
+	 * rwnx_external_auth_enable(). During a roam, sta.ap still describes
+	 * the previous AP; using its queue/firmware STA ID misroutes auth frames.
+	 */
+	if (!ap && rwnx_vif->sta.external_auth &&
+	    ieee80211_is_auth(mgmt->frame_control))
+		rwnx_sta = NULL;
+	else
+		rwnx_sta = rwnx_retrieve_sta(rwnx_hw, rwnx_vif, mgmt->da,
+						 mgmt->frame_control, ap);
 #ifdef CREATE_TRACE_POINTS
 	trace_mgmt_tx((channel) ? channel->center_freq : 0,
 				  rwnx_vif->vif_index, (rwnx_sta) ? rwnx_sta->sta_idx : 0xFF,
