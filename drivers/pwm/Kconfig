@@ -770,6 +770,17 @@ config PWM_TEGRA
 	  To compile this driver as a module, choose M here: the module
 	  will be called pwm-tegra.
 
+config PWM_TH1520_LPI4A_DEBUG
+	tristate "LPi4A fixed-channel backlight bring-up"
+	depends on ARCH_THEAD && OF && GPIOLIB && COMMON_CLK
+	depends on PWM_TH1520 = n
+	help
+	  Fixed-board PWM0 backlight support for the validated LPi4A panel
+	  bring-up. The bootloader's PWM1 fan is left untouched. Continuous
+	  20-percent output requires explicit module parameters; the default
+	  is a disconnected probe. This is not a generic PWM controller.
+	  The module is called th1520_pwm0_diag.
+
 config PWM_TH1520
 	tristate "TH1520 PWM support"
 	depends on ARCH_THEAD || COMPILE_TEST
