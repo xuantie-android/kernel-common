@@ -3,8 +3,8 @@
  * T-Head TH1520 video-processing subsystem clock gates.
  *
  * The AP clock controller supplies the programmable VENC parent clock. The
- * video-processing subsystem has three additional gates in VP_SYSREG_R which
- * must be enabled before accessing VC8000E.
+ * video-processing subsystem has additional gates and dividers in VP_SYSREG_R
+ * which must be enabled before accessing VC8000E or GC620.
  */
 
 #include <linux/clk-provider.h>
@@ -27,11 +27,16 @@ static const struct th1520_vpsys_gate th1520_venc_gates[] = {
 	[TH1520_VPSYS_VENC_PCLK] = { "th1520-venc-pclk", 9 },
 };
 
+#define TH1520_VPSYS_GATE_REG		0x00
+#define TH1520_VPSYS_G2D_DIV_REG	0x10
+#define TH1520_VPSYS_G2D_GATE_BIT	3
+
 static int th1520_vpsys_clk_probe(struct platform_device *pdev)
 {
 	struct clk_hw_onecell_data *clk_data;
 	struct device *dev = &pdev->dev;
 	spinlock_t *lock;
+	struct clk_hw *g2d_div;
 	void __iomem *reg;
 	unsigned int i;
 
@@ -64,6 +69,26 @@ static int th1520_vpsys_clk_probe(struct platform_device *pdev)
 					     "failed to register %s\n",
 					     gate->name);
 	}
+
+	g2d_div = devm_clk_hw_register_divider(dev, "th1520-g2d-div",
+					       "video-pll", CLK_SET_RATE_PARENT,
+					       reg + TH1520_VPSYS_G2D_DIV_REG,
+					       0, 4, CLK_DIVIDER_ONE_BASED,
+					       lock);
+	if (IS_ERR(g2d_div))
+		return dev_err_probe(dev, PTR_ERR(g2d_div),
+				     "failed to register G2D divider\n");
+
+	clk_data->hws[TH1520_VPSYS_G2D_CCLK] =
+		devm_clk_hw_register_gate(dev, "th1520-g2d-cclk",
+					  "th1520-g2d-div", CLK_SET_RATE_PARENT,
+					  reg + TH1520_VPSYS_GATE_REG,
+					  TH1520_VPSYS_G2D_GATE_BIT, 0,
+					  lock);
+	if (IS_ERR(clk_data->hws[TH1520_VPSYS_G2D_CCLK]))
+		return dev_err_probe(dev,
+			PTR_ERR(clk_data->hws[TH1520_VPSYS_G2D_CCLK]),
+			"failed to register G2D clock\n");
 
 	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
 					   clk_data);

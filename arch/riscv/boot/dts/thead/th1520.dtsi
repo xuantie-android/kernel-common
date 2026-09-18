@@ -636,7 +636,7 @@
 
 		vpsys_clk: clock-controller@ffecc30020 {
 			compatible = "thead,th1520-clk-vpsys";
-			reg = <0xff 0xecc30020 0x0 0x4>;
+			reg = <0xff 0xecc30020 0x0 0x14>;
 			#clock-cells = <1>;
 		};
 
@@ -657,6 +657,19 @@
 			clock-names = "aclk", "cclk", "pclk";
 			operating-points-v2 = <&venc_opp_table>;
 			status = "disabled";
+		};
+
+		/* Vivante GC620, 2D only */
+		g2d: gpu@ffecc80000 {
+			compatible = "vivante,gc";
+			reg = <0xff 0xecc80000 0x0 0x40000>;
+			interrupt-parent = <&plic>;
+			interrupts = <101 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&vpsys_clk TH1520_VPSYS_G2D_CCLK>;
+			clock-names = "core";
+			assigned-clocks = <&vpsys_clk TH1520_VPSYS_G2D_CCLK>;
+			assigned-clock-rates = <264000000>;
+			status = "okay";
 		};
 
 		clk: clock-controller@ffef010000 {
