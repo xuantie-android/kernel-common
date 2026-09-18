@@ -17,11 +17,17 @@
 #include <linux/gfp.h>
 #include <linux/iosys-map.h>
 #include <linux/log2.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/property.h>
 #include <linux/refcount.h>
 #include <linux/scatterlist.h>
+
+static bool force_explicit_bo_zero;
+module_param_unsafe(force_explicit_bo_zero, bool, 0600);
+MODULE_PARM_DESC(force_explicit_bo_zero,
+		 "Force an explicit PowerVR BO clear after shmem initialization");
 
 static void pvr_gem_object_free(struct drm_gem_object *obj)
 {
@@ -379,10 +385,16 @@ pvr_gem_object_create(struct pvr_device *pvr_dev, size_t size, u64 flags)
 	dma_sync_sgtable_for_device(drm_dev->dev, sgt, DMA_BIDIRECTIONAL);
 
 	/*
-	 * Do this last because pvr_gem_object_zero() requires a fully
+	 * Newly faulted shmem pages are already zero-filled by the VM. Clearing
+	 * them again through a WC mapping is particularly expensive on
+	 * non-coherent systems such as TH1520, and adds no initialization
+	 * guarantee. Keep an opt-in fallback for bring-up and diagnostics.
+	 *
+	 * This must remain last because pvr_gem_object_zero() requires a fully
 	 * configured instance of struct pvr_gem_object.
 	 */
-	pvr_gem_object_zero(pvr_obj);
+	if (force_explicit_bo_zero)
+		pvr_gem_object_zero(pvr_obj);
 
 	return pvr_obj;
 
