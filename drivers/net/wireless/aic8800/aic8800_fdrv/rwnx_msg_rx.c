@@ -944,6 +944,21 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
     }
 
 	if (!ind->roamed){//not roaming
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+		/* A local firmware timeout carries neither a peer BSSID nor an
+		 * association response. Do not present it as an AP rejection:
+		 * userspace otherwise misclassifies SAE timeouts as wrong passwords.
+		 * Preserve explicit rejection statuses and responses unchanged.
+		 */
+		if (ind->status_code == WLAN_STATUS_UNSPECIFIED_FAILURE &&
+		    is_zero_ether_addr((const u8 *)ind->bssid.array) &&
+		    !ind->assoc_rsp_ie_len)
+			cfg80211_connect_timeout(dev, rwnx_vif->sta.bssid,
+					 req_ie, ind->assoc_req_ie_len, GFP_ATOMIC,
+					 rwnx_vif->sta.external_auth ?
+					 NL80211_TIMEOUT_AUTH : NL80211_TIMEOUT_ASSOC);
+		else
+#endif
         cfg80211_connect_result(dev, (const u8 *)ind->bssid.array, req_ie,
                             ind->assoc_req_ie_len, rsp_ie,
                             ind->assoc_rsp_ie_len, ind->status_code,
@@ -1628,4 +1643,3 @@ void rwnx_rx_handle_print(struct rwnx_hw *rwnx_hw, u8 *msg, u32 len)
 	spin_unlock_bh(&rwnx_hw->debugfs.fw_log.lock);
 #endif
 }
-
