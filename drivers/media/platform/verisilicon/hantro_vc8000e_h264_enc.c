@@ -552,6 +552,7 @@ int hantro_vc8000e_h264_enc_run(struct hantro_ctx *ctx)
 	const struct v4l2_format_info *info;
 	unsigned int luma_stride;
 	unsigned int chroma_stride;
+	dma_addr_t input_dma;
 	int ret;
 
 	hantro_start_prepare_run(ctx);
@@ -595,8 +596,9 @@ int hantro_vc8000e_h264_enc_run(struct hantro_ctx *ctx)
 	luma_stride = src_fmt->plane_fmt[0].bytesperline;
 
 	/*
-	 * The hardware seems to expect the luma stride to represent pixels per
-	 * line for packed cases, instead of the usual bytes per line.
+	 * The input stride registers count packed pixels, while planar 8-bit
+	 * formats naturally have one byte per luma sample.  This matches the
+	 * VC8000E SDK's byte-stride-to-pixel-stride conversion.
 	 */
 	if (info->comp_planes == 1)
 		luma_stride /= info->bpp[0];
@@ -614,32 +616,40 @@ int hantro_vc8000e_h264_enc_run(struct hantro_ctx *ctx)
 		regs->swreg211.input_ch_stride = chroma_stride;
 	}
 
-	regs->swreg12.input_y_base =
-		vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0);
+	input_dma = vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0) +
+		src_buf->vb2_buf.planes[0].data_offset;
+	regs->swreg12.input_y_base = lower_32_bits(input_dma);
+	regs->swreg53.input_y_base_msb = upper_32_bits(input_dma);
 
 	if (info->comp_planes > 1) {
-		if (src_fmt->num_planes > 1)
-			regs->swreg13.input_cb_base =
-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf,
-							      1);
-		else
-			regs->swreg13.input_cb_base =
-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf,
-							      0) +
+		if (src_fmt->num_planes > 1) {
+			input_dma =
+				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 1) +
+				src_buf->vb2_buf.planes[1].data_offset;
+		} else {
+			input_dma =
+				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0) +
+				src_buf->vb2_buf.planes[0].data_offset +
 				luma_stride * src_fmt->height;
+		}
+		regs->swreg13.input_cb_base = lower_32_bits(input_dma);
+		regs->swreg54.input_cb_base_msb = upper_32_bits(input_dma);
 	}
 
 	if (info->comp_planes > 2) {
-		if (src_fmt->num_planes > 1)
-			regs->swreg14.input_cr_base =
-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf,
-							      2);
-		else
-			regs->swreg14.input_cr_base =
-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf,
-							      0) +
+		if (src_fmt->num_planes > 1) {
+			input_dma =
+				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 2) +
+				src_buf->vb2_buf.planes[2].data_offset;
+		} else {
+			input_dma =
+				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0) +
+				src_buf->vb2_buf.planes[0].data_offset +
 				luma_stride * src_fmt->height +
 				chroma_stride * src_fmt->height;
+		}
+		regs->swreg14.input_cr_base = lower_32_bits(input_dma);
+		regs->swreg55.input_cr_base_msb = upper_32_bits(input_dma);
 	}
 
 	/* Output */
