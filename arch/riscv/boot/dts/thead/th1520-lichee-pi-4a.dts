@@ -67,7 +67,9 @@
 	wifi_pwrseq: wifi-pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		reset-gpios = <&ioexp2 4 GPIO_ACTIVE_LOW>;
+		reset-assert-delay-ms = <500>;
 		post-power-on-delay-ms = <200>;
+		power-off-delay-us = <500000>;
 	};
 
 	thermal-zones {

@@ -42,6 +42,12 @@ properties:
       Delay in ms after powering the card and de-asserting the
       reset-gpios (if any).
 
+  reset-assert-delay-ms:
+    description:
+      Delay in ms after asserting reset-gpios in the pre-power-on phase and
+      before the card power-up procedure begins. This permits a full warm
+      reset of devices whose main supply remains present.
+
   power-off-delay-us:
     description:
       Delay in us after asserting the reset-gpios (if any)

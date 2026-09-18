@@ -27,6 +27,7 @@
 struct mmc_pwrseq_simple {
 	struct mmc_pwrseq pwrseq;
 	bool clk_enabled;
+	u32 reset_assert_delay_ms;
 	u32 post_power_on_delay_ms;
 	u32 power_off_delay_us;
 	struct clk *ext_clk;
@@ -74,6 +75,12 @@ static void mmc_pwrseq_simple_pre_power_on(struct mmc_host *host)
 		reset_control_assert(pwrseq->reset_ctrl);
 	} else
 		mmc_pwrseq_simple_set_gpios_value(pwrseq, 1);
+
+	/* Some soldered SDIO devices need a real low pulse to leave a stale
+	 * firmware or boot-ROM state before the host starts enumeration.
+	 */
+	if (pwrseq->reset_assert_delay_ms)
+		msleep(pwrseq->reset_assert_delay_ms);
 }
 
 static void mmc_pwrseq_simple_post_power_on(struct mmc_host *host)
@@ -156,6 +163,8 @@ static int mmc_pwrseq_simple_probe(struct platform_device *pdev)
 		}
 	}
 
+	device_property_read_u32(dev, "reset-assert-delay-ms",
+				 &pwrseq->reset_assert_delay_ms);
 	device_property_read_u32(dev, "post-power-on-delay-ms",
 				 &pwrseq->post_power_on_delay_ms);
 	device_property_read_u32(dev, "power-off-delay-us",
