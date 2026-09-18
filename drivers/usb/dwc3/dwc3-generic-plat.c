@@ -8,6 +8,8 @@
  */
 
 #include <linux/clk.h>
+#include <linux/gpio/consumer.h>
+#include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
 #include <linux/regmap.h>
@@ -22,16 +24,28 @@
 #define EIC7700_HSP_AXI_LP_XM_CSYSREQ	BIT(0)
 #define EIC7700_HSP_AXI_LP_XS_CSYSREQ	BIT(16)
 
+#define TH1520_USB_CLK_GATE_MASK	GENMASK(3, 0)
+#define TH1520_USBPHY_TEST_CTRL2	0x2c
+#define TH1520_USBPHY_TEST_CTRL3	0x30
+#define TH1520_USB_SSP_EN		0x34
+#define TH1520_USB_SYS			0x3c
+#define TH1520_USB_HOST_CTRL		0x44
+#define TH1520_USB_REF_SSP_EN		BIT(0)
+#define TH1520_USB_COMMONONN		BIT(0)
+
 struct dwc3_generic {
 	struct device		*dev;
 	struct dwc3		dwc;
 	struct clk_bulk_data	*clks;
 	int			num_clocks;
 	struct reset_control	*resets;
+	struct gpio_desc	*hubswitch;
 };
 
 struct dwc3_generic_config {
+	int (*pre_reset_init)(struct dwc3_generic *dwc3g);
 	int (*init)(struct dwc3_generic *dwc3g);
+	const struct dwc3_glue_ops *glue_ops;
 	struct dwc3_properties properties;
 };
 
@@ -41,6 +55,90 @@ static void dwc3_generic_reset_control_assert(void *data)
 {
 	reset_control_assert(data);
 }
+
+static int dwc3_th1520_pre_reset_init(struct dwc3_generic *dwc3g)
+{
+	struct device *dev = dwc3g->dev;
+	struct platform_device *pdev = to_platform_device(dev);
+	void __iomem *clock_gate;
+	void __iomem *usb3_drd;
+	enum gpiod_flags flags;
+	int ret;
+	u32 val;
+
+	/*
+	 * The Lichee Pi 4A routes the Type-C connector either to the SoC
+	 * controller or to the on-board hub. Keep it on the SoC for gadget
+	 * mode, and retain the vendor host-mode behaviour otherwise.
+	 */
+	flags = usb_get_dr_mode(dev) == USB_DR_MODE_HOST ?
+		GPIOD_OUT_HIGH : GPIOD_OUT_LOW;
+	dwc3g->hubswitch = devm_gpiod_get_optional(dev, "hubswitch", flags);
+	if (IS_ERR(dwc3g->hubswitch))
+		return dev_err_probe(dev, PTR_ERR(dwc3g->hubswitch),
+				     "failed to select USB connector role\n");
+
+	/*
+	 * The VL817 and its downstream Type-A ports are fed by three switched
+	 * rails on the Lichee Pi 4A.  Keep them available while the DWC3 role is
+	 * changed at runtime; hubswitch still decides whether USB2 is routed to
+	 * the hub or to the Type-C gadget connector.
+	 */
+	ret = devm_regulator_get_enable_optional(dev, "hub1v2");
+	if (ret && ret != -ENODEV)
+		return dev_err_probe(dev, ret, "failed to enable hub 1.2V rail\n");
+
+	ret = devm_regulator_get_enable_optional(dev, "hub5v");
+	if (ret && ret != -ENODEV)
+		return dev_err_probe(dev, ret, "failed to enable hub 5V rail\n");
+
+	ret = devm_regulator_get_enable_optional(dev, "vbus");
+	if (ret && ret != -ENODEV)
+		return dev_err_probe(dev, ret, "failed to enable Type-A VBUS\n");
+
+	clock_gate = devm_platform_ioremap_resource_byname(pdev, "clock-gate");
+	if (IS_ERR(clock_gate))
+		return dev_err_probe(dev, PTR_ERR(clock_gate),
+				     "failed to map USB clock gate\n");
+
+	usb3_drd = devm_platform_ioremap_resource_byname(pdev, "usb3-drd");
+	if (IS_ERR(usb3_drd))
+		return dev_err_probe(dev, PTR_ERR(usb3_drd),
+				     "failed to map USB DRD registers\n");
+
+	val = readl_relaxed(clock_gate);
+	writel_relaxed(val | TH1520_USB_CLK_GATE_MASK, clock_gate);
+
+	/* PHY values and ordering are taken from the TH1520 boot firmware. */
+	writel_relaxed(0x015150f0, usb3_drd + TH1520_USBPHY_TEST_CTRL2);
+	writel_relaxed(0x0000077f, usb3_drd + TH1520_USBPHY_TEST_CTRL3);
+
+	val = readl_relaxed(usb3_drd + TH1520_USB_SYS);
+	writel_relaxed(val | TH1520_USB_COMMONONN,
+		       usb3_drd + TH1520_USB_SYS);
+	val = readl_relaxed(usb3_drd + TH1520_USB_SSP_EN);
+	writel_relaxed(val | TH1520_USB_REF_SSP_EN,
+		       usb3_drd + TH1520_USB_SSP_EN);
+	writel_relaxed(0x1101, usb3_drd + TH1520_USB_HOST_CTRL);
+	udelay(10);
+
+	return 0;
+}
+
+static void dwc3_th1520_pre_set_role(struct dwc3 *dwc, enum usb_role role)
+{
+	struct dwc3_generic *dwc3g = to_dwc3_generic(dwc);
+
+	if (!dwc3g->hubswitch)
+		return;
+
+	/* High selects the on-board VL817 hub; low selects gadget USB. */
+	gpiod_set_value_cansleep(dwc3g->hubswitch, role == USB_ROLE_HOST);
+}
+
+static const struct dwc3_glue_ops dwc3_th1520_glue_ops = {
+	.pre_set_role = dwc3_th1520_pre_set_role,
+};
 
 static int dwc3_eic7700_init(struct dwc3_generic *dwc3g)
 {
@@ -106,6 +204,8 @@ static int dwc3_generic_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+	plat_config = of_device_get_match_data(dev);
+
 	dwc3g->resets = devm_reset_control_array_get_optional_exclusive(dev);
 	if (IS_ERR(dwc3g->resets))
 		return dev_err_probe(dev, PTR_ERR(dwc3g->resets), "failed to get resets\n");
@@ -113,6 +213,13 @@ static int dwc3_generic_probe(struct platform_device *pdev)
 	ret = reset_control_assert(dwc3g->resets);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to assert resets\n");
+
+	if (plat_config && plat_config->pre_reset_init) {
+		ret = plat_config->pre_reset_init(dwc3g);
+		if (ret)
+			return dev_err_probe(dev, ret,
+					     "failed to initialize platform before reset release\n");
+	}
 
 	/* Not strict timing, just for safety */
 	udelay(2);
@@ -131,11 +238,11 @@ static int dwc3_generic_probe(struct platform_device *pdev)
 
 	dwc3g->num_clocks = ret;
 	dwc3g->dwc.dev = dev;
+	dwc3g->dwc.glue_ops = plat_config ? plat_config->glue_ops : NULL;
 	probe_data.dwc = &dwc3g->dwc;
 	probe_data.res = res;
 	probe_data.ignore_clocks_and_resets = true;
 
-	plat_config = of_device_get_match_data(dev);
 	if (!plat_config) {
 		probe_data.properties = DWC3_DEFAULT_PROPERTIES;
 		goto core_probe;
@@ -231,11 +338,18 @@ static const struct dwc3_generic_config eic7700_dwc3 =  {
 	.properties = DWC3_DEFAULT_PROPERTIES,
 };
 
+static const struct dwc3_generic_config th1520_dwc3 = {
+	.pre_reset_init = dwc3_th1520_pre_reset_init,
+	.glue_ops = &dwc3_th1520_glue_ops,
+	.properties = DWC3_DEFAULT_PROPERTIES,
+};
+
 static const struct of_device_id dwc3_generic_of_match[] = {
 	{ .compatible = "spacemit,k1-dwc3", &spacemit_k1_dwc3},
 	{ .compatible = "spacemit,k3-dwc3", },
 	{ .compatible = "fsl,ls1028a-dwc3", &fsl_ls1028_dwc3},
 	{ .compatible = "eswin,eic7700-dwc3", &eic7700_dwc3},
+	{ .compatible = "thead,th1520-dwc3", &th1520_dwc3 },
 	{ .compatible = "starfive,jhb100-dwc3", },
 	{ /* sentinel */ }
 };
