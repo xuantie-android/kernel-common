@@ -1,0 +1,5 @@
+config AIC8800_WLAN_SUPPORT
+	tristate "AIC8800 wlan Support"
+	depends on AIC_WLAN_SUPPORT
+	help
+	  FullMAC cfg80211 driver for AIC8800-family SDIO devices.

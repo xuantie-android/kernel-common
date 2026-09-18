@@ -1,0 +1,17 @@
+config AIC_WLAN_SUPPORT
+	tristate "AIC SDIO bus and firmware support"
+	depends on MMC && CFG80211
+	default n
+	help
+	  Bus and firmware-loader support for AIC8800-family SDIO devices.
+
+config AIC_FW_PATH
+	depends on AIC_WLAN_SUPPORT
+	string "Firmware & config file path"
+	default "/lib/firmware/aic8800_fw/SDIO"
+	help
+	  Path to the firmware & config file.
+
+if AIC_WLAN_SUPPORT
+source "drivers/net/wireless/aic8800/aic8800_fdrv/Kconfig"
+endif
