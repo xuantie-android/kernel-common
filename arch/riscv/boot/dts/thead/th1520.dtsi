@@ -679,7 +679,8 @@
 			clocks = <&vpsys_clk TH1520_VPSYS_G2D_CCLK>;
 			clock-names = "core";
 			assigned-clocks = <&vpsys_clk TH1520_VPSYS_G2D_CCLK>;
-			assigned-clock-rates = <264000000>;
+			/* VIDEO_PLL VCO 2376 MHz / 3; preserve the boot divisor. */
+			assigned-clock-rates = <792000000>;
 			status = "okay";
 		};
 

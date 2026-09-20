@@ -477,6 +477,11 @@ static const struct clk_ops clk_pll_ops = {
 	.set_rate	= ccu_pll_set_rate,
 };
 
+/* A read-only tap: only video-pll owns the shared PLL's programming. */
+static const struct clk_ops clk_pll_vco_ro_ops = {
+	.recalc_rate	= th1520_pll_vco_recalc_rate,
+};
+
 /*
  * c910_clk could be reparented glitchlessly for DVFS. There are two parents,
  *  - c910_i0_clk, derived from cpu_pll0_clk or osc_24m.
@@ -660,6 +665,24 @@ static struct ccu_pll video_pll_clk = {
 
 static const struct clk_hw *video_pll_clk_parent[] = {
 	&video_pll_clk.common.hw
+};
+
+/*
+ * VP's G2D divider is wired to FOUTVCO, not the postdivided video-pll
+ * output. Keep that existing output and all of its consumers unchanged.
+ * video-pll is critical and owns enable/reset/rate operations; this tap must
+ * not program the same PLL independently or propagate G2D rate requests.
+ */
+static struct ccu_pll video_pll_vco_clk = {
+	.common = {
+		.clkid = CLK_VIDEO_PLL_VCO,
+		.cfg0 = 0x030,
+		.cfg1 = 0x034,
+		.hw.init = CLK_HW_INIT_PARENTS_DATA("video-pll-vco",
+						  osc_24m_clk,
+						  &clk_pll_vco_ro_ops,
+						  CLK_GET_RATE_NOCACHE),
+	},
 };
 
 static const struct clk_parent_data video_pll_clk_pd[] = {
@@ -1285,6 +1308,7 @@ static struct ccu_common *th1520_pll_clks[] = {
 	&cpu_pll1_clk.common,
 	&gmac_pll_clk.common,
 	&video_pll_clk.common,
+	&video_pll_vco_clk.common,
 	&dpu0_pll_clk.common,
 	&dpu1_pll_clk.common,
 	&tee_pll_clk.common,
@@ -1435,7 +1459,7 @@ static const struct th1520_plat_data th1520_ap_platdata = {
 	.th1520_mux_clks = th1520_mux_clks,
 	.th1520_gate_clks = th1520_gate_clks,
 
-	.nr_clks = CLK_C910_BUS + 1,
+	.nr_clks = CLK_VIDEO_PLL_VCO + 1,
 
 	.nr_pll_clks = ARRAY_SIZE(th1520_pll_clks),
 	.nr_div_clks = ARRAY_SIZE(th1520_div_clks),

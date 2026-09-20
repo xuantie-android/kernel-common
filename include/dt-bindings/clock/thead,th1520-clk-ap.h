@@ -94,6 +94,7 @@
 #define CLK_PLL_GMAC_100M	84
 #define CLK_UART_SCLK		85
 #define CLK_C910_BUS		86
+#define CLK_VIDEO_PLL_VCO	87
 
 /* VO clocks */
 #define CLK_AXI4_VO_ACLK		0
