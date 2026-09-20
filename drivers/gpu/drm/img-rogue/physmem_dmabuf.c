@@ -168,6 +168,8 @@ typedef struct _PMR_DMA_BUF_DATA_
 	struct dma_buf_attachment *psAttachment;
 	PFN_DESTROY_DMABUF_PMR pfnDestroy;
 	IMG_BOOL bPoisonOnFree;
+	IMG_BOOL bDeferredDmaMap;
+	struct mutex sDmaMapLock;
 
 	/* Mapping information. */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
@@ -341,7 +343,8 @@ static PVRSRV_ERROR PMRFinalizeDmaBuf(PMR_IMPL_PRIVDATA pvPriv)
 
 	psPrivData->ui32PhysPageCount = 0;
 
-	dma_buf_unmap_attachment(psAttachment, psSgTable, DMA_BIDIRECTIONAL);
+	if (psSgTable)
+		dma_buf_unmap_attachment(psAttachment, psSgTable, DMA_BIDIRECTIONAL);
 
 
 	if (psPrivData->bPoisonOnFree)
@@ -367,6 +370,7 @@ static PVRSRV_ERROR PMRFinalizeDmaBuf(PMR_IMPL_PRIVDATA pvPriv)
 	}
 
 	OSFreeMem(psPrivData->pasDevPhysAddr);
+	mutex_destroy(&psPrivData->sDmaMapLock);
 	OSFreeMem(psPrivData);
 
 	return PVRSRV_OK;
@@ -394,6 +398,58 @@ static void PMRReleaseFactoryLock(void)
 	mutex_unlock(&g_HashLock);
 }
 
+/* Only non-sparse CPU-only imports may reach here without a DMA mapping.
+ * CPU mmap uses the exporter's mmap operation and needs no device address.
+ * Map once, before returning the first device address, and retain that mapping
+ * until PMR destruction. In particular, a later importer requesting GPU access
+ * gets a normal BIDIRECTIONAL mapping, not the first importer's CPU permissions.
+ */
+static PVRSRV_ERROR PMREnsureDmaMapping(PMR_DMA_BUF_DATA *psPrivData)
+{
+	struct sg_table *table;
+	struct scatterlist *sg;
+	IMG_UINT32 i, page = 0;
+	PVRSRV_ERROR eError = PVRSRV_OK;
+
+	if (!psPrivData->bDeferredDmaMap)
+		return PVRSRV_OK;
+
+	mutex_lock(&psPrivData->sDmaMapLock);
+	if (psPrivData->psSgTable)
+		goto out;
+
+	table = dma_buf_map_attachment(psPrivData->psAttachment, DMA_BIDIRECTIONAL);
+	if (IS_ERR_OR_NULL(table))
+	{
+		eError = PVRSRV_ERROR_BAD_MAPPING;
+		goto out;
+	}
+
+	for_each_sg(table->sgl, sg, table->nents, i)
+	{
+		IMG_UINT32 offset;
+		for (offset = 0; offset < pvr_sg_length(sg); offset += PAGE_SIZE)
+		{
+			if (page >= psPrivData->ui32PhysPageCount)
+				goto bad_map;
+			psPrivData->pasDevPhysAddr[page++].uiAddr =
+				sg_dma_address(sg) + offset;
+		}
+	}
+	if (page != psPrivData->ui32PhysPageCount)
+		goto bad_map;
+
+	psPrivData->psSgTable = table;
+	goto out;
+
+bad_map:
+	dma_buf_unmap_attachment(psPrivData->psAttachment, table, DMA_BIDIRECTIONAL);
+	eError = PVRSRV_ERROR_INVALID_PARAMS;
+out:
+	mutex_unlock(&psPrivData->sDmaMapLock);
+	return eError;
+}
+
 static PVRSRV_ERROR PMRDevPhysAddrDmaBuf(PMR_IMPL_PRIVDATA pvPriv,
 					 IMG_UINT32 ui32Log2PageSize,
 					 IMG_UINT32 ui32NumOfPages,
@@ -404,11 +460,16 @@ static PVRSRV_ERROR PMRDevPhysAddrDmaBuf(PMR_IMPL_PRIVDATA pvPriv,
 	PMR_DMA_BUF_DATA *psPrivData = pvPriv;
 	IMG_UINT32 ui32PageIndex;
 	IMG_UINT32 idx;
+	PVRSRV_ERROR eError;
 
 	if (ui32Log2PageSize != PAGE_SHIFT)
 	{
 		return PVRSRV_ERROR_PMR_INCOMPATIBLE_CONTIGUITY;
 	}
+
+	eError = PMREnsureDmaMapping(psPrivData);
+	if (eError != PVRSRV_OK)
+		return eError;
 
 	for (idx=0; idx < ui32NumOfPages; idx++)
 	{
@@ -564,7 +625,7 @@ PhysmemCreateNewDmaBufBackedPMR(PHYS_HEAP *psHeap,
 	IMG_UINT32 uiPagesPerChunk = uiChunkSize >> PAGE_SHIFT;
 	IMG_UINT32 ui32PageCount = 0;
 	struct scatterlist *sg;
-	struct sg_table *table;
+	struct sg_table *table = NULL;
 	IMG_UINT32 uiSglOffset;
 	IMG_CHAR pszAnnotation[DEVMEM_ANNOTATION_MAX_LEN];
 
@@ -596,6 +657,7 @@ PhysmemCreateNewDmaBufBackedPMR(PHYS_HEAP *psHeap,
 	psPrivData->psAttachment = psAttachment;
 	psPrivData->pfnDestroy = pfnDestroy;
 	psPrivData->bPoisonOnFree = bPoisonOnFree;
+	mutex_init(&psPrivData->sDmaMapLock);
 	psPrivData->ui32VirtPageCount =
 			(ui32NumVirtChunks * uiChunkSize) >> PAGE_SHIFT;
 
@@ -626,6 +688,24 @@ PhysmemCreateNewDmaBufBackedPMR(PHYS_HEAP *psHeap,
 			eError = PVRSRV_ERROR_PMR_NO_KERNEL_MAPPING;
 			goto errFreePhysAddr;
 		}
+	}
+
+	/* CPU-only shared metadata must not acquire a device mapping merely by
+	 * being imported. Otherwise its teardown invalidates dirty CPU data
+	 * before the allocator can publish it. Do not infer lifetime permissions
+	 * from uiFlags: PMRs are shared and a later user can request a GPU address.
+	 * Such a request maps lazily above, with the usual bidirectional semantics.
+	 * Keep eager mapping for GPU-capable and sparse imports unchanged.
+	 */
+	if (PVRSRV_CHECK_CPU_WRITEABLE(uiFlags) &&
+	    !PVRSRV_CHECK_GPU_READABLE(uiFlags) &&
+	    !PVRSRV_CHECK_GPU_WRITEABLE(uiFlags) &&
+	    ui32NumPhysChunks == 1 && ui32NumVirtChunks == 1 &&
+	    pui32MappingTable[0] == 0 && uiChunkSize == psDmaBuf->size)
+	{
+		psPrivData->bDeferredDmaMap = IMG_TRUE;
+		psPrivData->ui32PhysPageCount = psPrivData->ui32VirtPageCount;
+		goto create_pmr;
 	}
 
 	table = dma_buf_map_attachment(psAttachment, DMA_BIDIRECTIONAL);
@@ -698,6 +778,7 @@ PhysmemCreateNewDmaBufBackedPMR(PHYS_HEAP *psHeap,
 		}
 	}
 
+create_pmr:
 #if defined(PVRSRV_ENABLE_PROCESS_STATS)
 	PVRSRVStatsIncrMemAllocStat(PVRSRV_MEM_ALLOC_TYPE_DMA_BUF_IMPORT,
 	                            psPrivData->ui32PhysPageCount << PAGE_SHIFT,
@@ -739,16 +820,23 @@ PhysmemCreateNewDmaBufBackedPMR(PHYS_HEAP *psHeap,
 	{
 		PVR_DPF((PVR_DBG_ERROR, "%s: Failed to create PMR (%s)",
 				 __func__, PVRSRVGetErrorString(eError)));
-		goto errFreePhysAddr;
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
+		PVRSRVStatsDecrMemAllocStat(PVRSRV_MEM_ALLOC_TYPE_DMA_BUF_IMPORT,
+		                            psPrivData->ui32PhysPageCount << PAGE_SHIFT,
+		                            OSGetCurrentClientProcessIDKM());
+#endif
+		goto errUnmap;
 	}
 
 	return PVRSRV_OK;
 
 errUnmap:
-	dma_buf_unmap_attachment(psAttachment, table, DMA_BIDIRECTIONAL);
+	if (table)
+		dma_buf_unmap_attachment(psAttachment, table, DMA_BIDIRECTIONAL);
 errFreePhysAddr:
 	OSFreeMem(psPrivData->pasDevPhysAddr);
 errFreePrivData:
+	mutex_destroy(&psPrivData->sDmaMapLock);
 	OSFreeMem(psPrivData);
 errReturn:
 	PVR_ASSERT(eError != PVRSRV_OK);
