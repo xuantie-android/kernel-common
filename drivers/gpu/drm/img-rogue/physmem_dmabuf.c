@@ -285,6 +285,26 @@ err_out:
  *                          PMR callback functions                           *
  *****************************************************************************/
 
+/* PMR factory/physical-address callers do not hold the dma-buf reservation. */
+static struct sg_table *DmaBufMapAttachment(struct dma_buf_attachment *attachment)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	return dma_buf_map_attachment_unlocked(attachment, DMA_BIDIRECTIONAL);
+#else
+	return dma_buf_map_attachment(attachment, DMA_BIDIRECTIONAL);
+#endif
+}
+
+static void DmaBufUnmapAttachment(struct dma_buf_attachment *attachment,
+				struct sg_table *table)
+{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	dma_buf_unmap_attachment_unlocked(attachment, table, DMA_BIDIRECTIONAL);
+#else
+	dma_buf_unmap_attachment(attachment, table, DMA_BIDIRECTIONAL);
+#endif
+}
+
 static PVRSRV_ERROR PMRFinalizeDmaBuf(PMR_IMPL_PRIVDATA pvPriv)
 {
 	PMR_DMA_BUF_DATA *psPrivData = pvPriv;
@@ -344,7 +364,7 @@ static PVRSRV_ERROR PMRFinalizeDmaBuf(PMR_IMPL_PRIVDATA pvPriv)
 	psPrivData->ui32PhysPageCount = 0;
 
 	if (psSgTable)
-		dma_buf_unmap_attachment(psAttachment, psSgTable, DMA_BIDIRECTIONAL);
+		DmaBufUnmapAttachment(psAttachment, psSgTable);
 
 
 	if (psPrivData->bPoisonOnFree)
@@ -418,7 +438,7 @@ static PVRSRV_ERROR PMREnsureDmaMapping(PMR_DMA_BUF_DATA *psPrivData)
 	if (psPrivData->psSgTable)
 		goto out;
 
-	table = dma_buf_map_attachment(psPrivData->psAttachment, DMA_BIDIRECTIONAL);
+	table = DmaBufMapAttachment(psPrivData->psAttachment);
 	if (IS_ERR_OR_NULL(table))
 	{
 		eError = PVRSRV_ERROR_BAD_MAPPING;
@@ -443,7 +463,7 @@ static PVRSRV_ERROR PMREnsureDmaMapping(PMR_DMA_BUF_DATA *psPrivData)
 	goto out;
 
 bad_map:
-	dma_buf_unmap_attachment(psPrivData->psAttachment, table, DMA_BIDIRECTIONAL);
+	DmaBufUnmapAttachment(psPrivData->psAttachment, table);
 	eError = PVRSRV_ERROR_INVALID_PARAMS;
 out:
 	mutex_unlock(&psPrivData->sDmaMapLock);
@@ -708,7 +728,7 @@ PhysmemCreateNewDmaBufBackedPMR(PHYS_HEAP *psHeap,
 		goto create_pmr;
 	}
 
-	table = dma_buf_map_attachment(psAttachment, DMA_BIDIRECTIONAL);
+	table = DmaBufMapAttachment(psAttachment);
 	if (IS_ERR_OR_NULL(table))
 	{
 		eError = PVRSRV_ERROR_INVALID_PARAMS;
@@ -832,7 +852,7 @@ create_pmr:
 
 errUnmap:
 	if (table)
-		dma_buf_unmap_attachment(psAttachment, table, DMA_BIDIRECTIONAL);
+		DmaBufUnmapAttachment(psAttachment, table);
 errFreePhysAddr:
 	OSFreeMem(psPrivData->pasDevPhysAddr);
 errFreePrivData:
