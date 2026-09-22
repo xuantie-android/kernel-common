@@ -530,10 +530,12 @@ config TOUCHSCREEN_IPROC
 config TOUCHSCREEN_S6D6FT0
 	tristate "Samsung S6D6FT0 integrated touchscreen"
 	depends on I2C && GPIOLIB
+	depends on DRM || !DRM
 	help
 	  Touch input for TL060FVXS07 panels using the Samsung S6D6FT0
 	  controller. Firmware is retained; no firmware upload or shared
-	  panel reset is performed. The module is called s6d6ft0.
+	  panel reset is performed. A panel reference sequences scanning with
+	  the display's enabled/disabling events. The module is called s6d6ft0.
 
 config TOUCHSCREEN_S6SY761
 	tristate "Samsung S6SY761 Touchscreen driver"

@@ -11,15 +11,19 @@
 #include <linux/input/mt.h>
 #include <linux/input/touchscreen.h>
 #include <linux/interrupt.h>
+#include <linux/iopoll.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/pm.h>
+#include <drm/drm_panel.h>
 #include "s6d6ft0_event.h"
 
 #define S6_ID 0x52
 #define S6_BOOT 0x55
 #define S6_FUNCTIONS_READ 0x64
+#define S6_STATUS 0x70
+#define S6_MODE_TOUCH 2
 #define S6_EVENT 0x71
 #define S6_SENSE_ON 0x40
 #define S6_SENSE_OFF 0x41
@@ -38,6 +42,9 @@ struct s6d6ft0 {
 	u8 id[3], last[8];
 	u64 events, contacts, errors, invalid;
 	bool irq_fault, suspended, stopped;
+	struct drm_panel_follower follower;
+	bool follows_panel, panel_enabled, scanning;
+	u64 starts, stops;
 };
 
 /* Separate STOP and >=100us gap are required by the vendor probe protocol. */
@@ -89,6 +96,94 @@ static int s6_start(struct s6d6ft0 *ts)
 		return ret;
 	return s6_command(ts, S6_SENSE_ON);
 }
+
+/* Poll command completion only during a transition, never as a watchdog. */
+static int s6_wait_scan(struct s6d6ft0 *ts, bool enabled)
+{
+	u8 state[4] = {};
+	int ret, err;
+
+	err = read_poll_timeout(s6_read, ret,
+		ret || ((state[1] == S6_MODE_TOUCH) == enabled),
+		1000, 100000, true, ts, S6_STATUS, state, sizeof(state));
+	if (ret || err)
+		dev_err(&ts->client->dev, "scan %s did not complete: %*ph (%d)\n",
+			enabled ? "start" : "stop", 4, state, ret ?: err);
+	return ret ?: err;
+}
+
+static int s6_enable_scan(struct s6d6ft0 *ts)
+{
+	int ret = 0;
+
+	mutex_lock(&ts->lock);
+	if (ts->stopped || ts->suspended || ts->scanning ||
+	    (ts->follows_panel && !ts->panel_enabled))
+		goto out;
+	ret = s6_start(ts);
+	if (!ret && ts->follows_panel)
+		ret = s6_wait_scan(ts, true);
+	if (ret) {
+		/* The panel is active here; leave sensing off on setup failure. */
+		s6_command(ts, S6_SENSE_OFF);
+		goto out;
+	}
+	ts->scanning = true;
+	ts->starts++;
+	if (ts->irq_fault) {
+		ts->irq_fault = false;
+		enable_irq(ts->irq);
+	}
+	enable_irq(ts->irq);
+out:
+	mutex_unlock(&ts->lock);
+	return ret;
+}
+
+static int s6_disable_scan(struct s6d6ft0 *ts)
+{
+	int ret = 0;
+
+	mutex_lock(&ts->lock);
+	if (ts->scanning) {
+		/* The IRQ thread takes lock too. Drain it only after dropping lock. */
+		disable_irq_nosync(ts->irq);
+		ts->scanning = false;
+		ret = s6_command(ts, S6_SENSE_OFF);
+		if (!ret && ts->follows_panel)
+			ret = s6_wait_scan(ts, false);
+		ts->stops++;
+		s6_release_all(ts);
+	}
+	mutex_unlock(&ts->lock);
+	synchronize_irq(ts->irq);
+	return ret;
+}
+
+static int s6_panel_enabled(struct drm_panel_follower *follower)
+{
+	struct s6d6ft0 *ts = container_of(follower, struct s6d6ft0, follower);
+
+	mutex_lock(&ts->lock);
+	ts->panel_enabled = true;
+	mutex_unlock(&ts->lock);
+	return s6_enable_scan(ts);
+}
+
+static int s6_panel_disabling(struct drm_panel_follower *follower)
+{
+	struct s6d6ft0 *ts = container_of(follower, struct s6d6ft0, follower);
+
+	mutex_lock(&ts->lock);
+	ts->panel_enabled = false;
+	mutex_unlock(&ts->lock);
+	return s6_disable_scan(ts);
+}
+
+static const struct drm_panel_follower_funcs s6_panel_funcs = {
+	.panel_enabled = s6_panel_enabled,
+	.panel_disabling = s6_panel_disabling,
+};
 
 static void s6_coordinate(struct s6d6ft0 *ts, const u8 e[8])
 {
@@ -153,6 +248,10 @@ static irqreturn_t s6_irq_thread(int irq, void *data)
 	int ret;
 
 	mutex_lock(&ts->lock);
+	if (!ts->scanning) {
+		mutex_unlock(&ts->lock);
+		return IRQ_HANDLED;
+	}
 	ret = s6_drain(ts);
 	if (ret) {
 		ts->errors++;
@@ -174,9 +273,10 @@ static ssize_t stats_show(struct device *dev, struct device_attribute *attr, cha
 	ssize_t len;
 
 	mutex_lock(&ts->lock);
-	len = sysfs_emit(buf, "id=%*ph events=%llu contacts=%llu errors=%llu invalid=%llu irq_fault=%u last=%*ph\n",
+	len = sysfs_emit(buf, "id=%*ph events=%llu contacts=%llu errors=%llu invalid=%llu irq_fault=%u last=%*ph scanning=%u follows_panel=%u panel_enabled=%u starts=%llu stops=%llu\n",
 		3, ts->id, ts->events, ts->contacts, ts->errors, ts->invalid,
-		ts->irq_fault, 8, ts->last);
+		ts->irq_fault, 8, ts->last, ts->scanning, ts->follows_panel,
+		ts->panel_enabled, ts->starts, ts->stops);
 	mutex_unlock(&ts->lock);
 	return len;
 }
@@ -197,6 +297,7 @@ static int s6_probe(struct i2c_client *client)
 	if (!ts)
 		return -ENOMEM;
 	ts->client = client;
+	ts->follows_panel = drm_is_panel_follower(dev);
 	mutex_init(&ts->lock);
 	i2c_set_clientdata(client, ts);
 	ts->irq_gpio = devm_gpiod_get_optional(dev, "irq", GPIOD_IN);
@@ -242,14 +343,20 @@ static int s6_probe(struct i2c_client *client)
 	ret = devm_device_add_group(dev, &s6_group);
 	if (ret)
 		return ret;
-	ret = s6_start(ts);
-	if (ret) {
-		s6_command(ts, S6_SENSE_OFF);
-		return dev_err_probe(dev, ret, "start sensing\n");
+	/* Integrated touch accepts I2C writes while display clocks are stopped,
+	 * but those writes need not execute. Start after panel enable, not probe
+	 * or generic device resume, and stop before the panel is disabled.
+	 */
+	if (ts->follows_panel) {
+		ts->follower.funcs = &s6_panel_funcs;
+		ret = devm_drm_panel_add_follower(dev, &ts->follower);
+	} else {
+		ret = s6_enable_scan(ts);
 	}
-	enable_irq(ts->irq);
-	dev_info(dev, "ID=%*ph boot=%02x irq=%d; no firmware upload or shared reset\n",
-		3, ts->id, boot, ts->irq);
+	if (ret)
+		return dev_err_probe(dev, ret, "set up sensing\n");
+	dev_info(dev, "ID=%*ph boot=%02x irq=%d panel_follower=%u; no firmware upload or shared reset\n",
+		3, ts->id, boot, ts->irq, ts->follows_panel);
 	return 0;
 }
 
@@ -257,14 +364,10 @@ static void s6_stop(struct i2c_client *client)
 {
 	struct s6d6ft0 *ts = i2c_get_clientdata(client);
 
-	if (ts->stopped)
-		return;
-	disable_irq(ts->irq);
 	mutex_lock(&ts->lock);
 	ts->stopped = true;
-	s6_command(ts, S6_SENSE_OFF);
-	s6_release_all(ts);
 	mutex_unlock(&ts->lock);
+	s6_disable_scan(ts);
 }
 
 static int s6_suspend(struct device *dev)
@@ -272,38 +375,32 @@ static int s6_suspend(struct device *dev)
 	struct s6d6ft0 *ts = dev_get_drvdata(dev);
 	int ret;
 
-	disable_irq(ts->irq);
+	/* The panel follower sequences this device before display clocks stop. */
+	if (ts->follows_panel)
+		return 0;
 	mutex_lock(&ts->lock);
-	ret = s6_command(ts, S6_SENSE_OFF);
-	if (!ret) {
-		ts->suspended = true;
-		s6_release_all(ts);
-	}
+	ts->suspended = true;
 	mutex_unlock(&ts->lock);
-	if (ret)
-		enable_irq(ts->irq);
+	ret = s6_disable_scan(ts);
+	if (ret) {
+		mutex_lock(&ts->lock);
+		ts->suspended = false;
+		mutex_unlock(&ts->lock);
+		s6_enable_scan(ts);
+	}
 	return ret;
 }
 
 static int s6_resume(struct device *dev)
 {
 	struct s6d6ft0 *ts = dev_get_drvdata(dev);
-	int ret;
 
+	if (ts->follows_panel)
+		return 0;
 	mutex_lock(&ts->lock);
-	ret = s6_start(ts);
-	if (!ret) {
-		ts->suspended = false;
-		/* Balance the additional disable from a previous event fault. */
-		if (ts->irq_fault) {
-			ts->irq_fault = false;
-			enable_irq(ts->irq);
-		}
-	}
+	ts->suspended = false;
 	mutex_unlock(&ts->lock);
-	if (!ret)
-		enable_irq(ts->irq);
-	return ret;
+	return s6_enable_scan(ts);
 }
 static DEFINE_SIMPLE_DEV_PM_OPS(s6_pm, s6_suspend, s6_resume);
 

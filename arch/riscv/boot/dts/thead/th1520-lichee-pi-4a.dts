@@ -33,6 +33,11 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+	/* Lifecycle endpoint of the board's fixed DSI0 terminal bridge. */
+	tl060_panel: panel-tl060fvxs07 {
+		compatible = "samsung,tl060fvxs07-lpi4a";
+	};
+
 	hdmi-connector {
 		compatible = "hdmi-connector";
 		type = "a";
@@ -201,6 +206,7 @@
 	/* U3-bypassed TL060 adapter; do not reset the shared display/touch line. */
 	touchscreen@48 {
 		compatible = "samsung,s6d6ft0";
+		panel = <&tl060_panel>;
 		reg = <0x48>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&tl060_touch_irq_pins>;

@@ -20,12 +20,16 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/platform_device.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_connector.h>
+#include <drm/drm_encoder.h>
 #include <drm/drm_modes.h>
+#include <drm/drm_panel.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
 #include <uapi/linux/media-bus-format.h>
 #include "vs_th1520_dsi0.h"
 
@@ -82,6 +86,8 @@ static struct {
     struct device *dev;
     struct mipi_dsi_host host;
     struct mipi_dsi_device *panel;
+    struct drm_panel *lifecycle;
+    bool lifecycle_driver_registered;
     bool region, host_registered, attached, modified, reset_touched, awake;
     u32 saved_reset, saved_phy_cfg;
     struct clk *pixel_gate;
@@ -89,6 +95,69 @@ static struct {
     bool pixel_gate_enabled, streaming;
     struct drm_display_mode mode;
 } diag;
+
+static int panel_get_modes(struct drm_bridge *bridge, struct drm_connector *connector);
+
+/* The fixed bridge owns DSI transport and power sequencing. Publish the
+ * corresponding panel lifecycle so integrated touch can follow real scanout,
+ * rather than treating an early DCS sleep-out as display readiness.
+ */
+struct vs_tl060_panel { struct drm_panel base; };
+
+static int tl060_get_modes(struct drm_panel *panel, struct drm_connector *connector)
+{
+    return panel_get_modes(NULL, connector);
+}
+
+static const struct drm_panel_funcs tl060_funcs = {
+    .get_modes = tl060_get_modes,
+};
+
+static int tl060_probe(struct platform_device *pdev)
+{
+    struct vs_tl060_panel *panel;
+
+    if (!diag.panel) return -EPROBE_DEFER;
+    if (diag.lifecycle) return -EBUSY;
+    panel = devm_drm_panel_alloc(&pdev->dev, struct vs_tl060_panel, base,
+                                &tl060_funcs, DRM_MODE_CONNECTOR_DSI);
+    if (IS_ERR(panel)) return PTR_ERR(panel);
+    platform_set_drvdata(pdev, &panel->base);
+    drm_panel_add(&panel->base);
+    diag.lifecycle = &panel->base;
+    return 0;
+}
+
+static void tl060_shutdown(struct platform_device *pdev)
+{
+    struct drm_panel *panel = platform_get_drvdata(pdev);
+
+    if (panel->enabled) drm_panel_disable(panel);
+    if (panel->prepared) drm_panel_unprepare(panel);
+}
+
+static void tl060_remove(struct platform_device *pdev)
+{
+    struct drm_panel *panel = platform_get_drvdata(pdev);
+
+    tl060_shutdown(pdev);
+    drm_panel_remove(panel);
+    diag.lifecycle = NULL;
+}
+
+static const struct of_device_id tl060_of_match[] = {
+    { .compatible = "samsung,tl060fvxs07-lpi4a" }, {}
+};
+
+static struct platform_driver tl060_driver = {
+    .probe = tl060_probe,
+    .remove = tl060_remove,
+    .shutdown = tl060_shutdown,
+    .driver = {
+        .name = "tl060fvxs07-lpi4a",
+        .of_match_table = tl060_of_match,
+    },
+};
 
 /* Source clock binding: VO PCLK=12, CFG=14, REFCLK=16. The gates' CCF
  * parent metadata is not the PHY's physical reference frequency; RevyOS
@@ -270,6 +339,9 @@ static int start_stream(void)
 static void cleanup(void)
 {
     unsigned int i;
+    /* Followers must stop while the display transport still has clocks. */
+    if (diag.lifecycle_driver_registered)
+        platform_driver_unregister(&tl060_driver);
     if (diag.streaming) {
         wr(DSI_PWR_UP, 0);
         wr(DSI_MODE_CFG, 1);
@@ -481,10 +553,24 @@ static void panel_pre_enable(struct drm_bridge *bridge, struct drm_atomic_commit
 {
     int ret = start_stream();
     if (ret) pr_err("vs-dsi0: stream start failed %d\n", ret);
+    else if (diag.lifecycle) drm_panel_prepare(diag.lifecycle);
+}
+
+static void panel_enable(struct drm_bridge *bridge, struct drm_atomic_commit *state)
+{
+    if (!diag.streaming || !diag.lifecycle) return;
+    /* atomic_pre_enable runs before the CRTC is on. Touch commands require
+     * the integrated controller to have seen active display timing.
+     */
+    if (bridge->encoder && bridge->encoder->crtc)
+        drm_crtc_wait_one_vblank(bridge->encoder->crtc);
+    drm_panel_enable(diag.lifecycle);
 }
 
 static void panel_disable(struct drm_bridge *bridge, struct drm_atomic_commit *state)
 {
+    if (diag.lifecycle && diag.lifecycle->enabled)
+        drm_panel_disable(diag.lifecycle);
     if (diag.streaming) {
         wr(DSI_PWR_UP, 0);
         wr(DSI_MODE_CFG, 1);
@@ -502,6 +588,8 @@ static void panel_disable(struct drm_bridge *bridge, struct drm_atomic_commit *s
         clk_disable_unprepare(diag.pixel_gate);
         diag.pixel_gate_enabled = false;
     }
+    if (diag.lifecycle && diag.lifecycle->prepared)
+        drm_panel_unprepare(diag.lifecycle);
     pr_info("vs-dsi0: DRM stream disabled; HDMI and backlight untouched\n");
 }
 
@@ -519,6 +607,7 @@ static const struct drm_bridge_funcs panel_funcs = {
     .mode_valid = panel_mode_valid,
     .mode_set = panel_mode_set,
     .atomic_pre_enable = panel_pre_enable,
+    .atomic_enable = panel_enable,
     .atomic_disable = panel_disable,
     .atomic_get_input_bus_fmts = panel_input_formats,
     .atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
@@ -543,6 +632,9 @@ struct drm_bridge *vs_th1520_dsi0_create(struct device *dev)
     drm_mode_set_crtcinfo(&diag.mode, 0);
     ret = devm_add_action_or_reset(dev, cleanup_action, NULL);
     if (ret) return ERR_PTR(ret);
+    ret = platform_driver_register(&tl060_driver);
+    if (ret) return ERR_PTR(ret);
+    diag.lifecycle_driver_registered = true;
     bridge->base.type = DRM_MODE_CONNECTOR_DSI;
     bridge->base.ops = DRM_BRIDGE_OP_MODES | DRM_BRIDGE_OP_DETECT;
     ret = devm_drm_bridge_add(dev, &bridge->base);
