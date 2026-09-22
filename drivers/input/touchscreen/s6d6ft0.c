@@ -27,7 +27,6 @@
 #define S6_EVENT 0x71
 #define S6_SENSE_ON 0x40
 #define S6_SENSE_OFF 0x41
-#define S6_CLEAR 0x60
 #define S6_FUNCTIONS 0x63
 #define S6_SLOTS 10
 #define S6_DRAIN_LIMIT 128
@@ -80,21 +79,38 @@ static void s6_release_all(struct s6d6ft0 *ts)
 
 static int s6_start(struct s6d6ft0 *ts)
 {
-	u8 functions, buf[2];
-	int ret;
+	u8 functions, buf[2], event[8];
+	int i, ret, err;
 
 	ret = s6_read(ts, S6_FUNCTIONS_READ, &functions, 1);
 	if (ret)
 		return ret;
-	buf[0] = S6_FUNCTIONS;
-	buf[1] = functions | BIT(0); /* Preserve existing modes; enable mutual touch. */
-	ret = i2c_master_send(ts->client, buf, sizeof(buf));
-	if (ret != sizeof(buf))
-		return ret < 0 ? ret : -EIO;
-	ret = s6_command(ts, S6_CLEAR);
-	if (ret)
-		return ret;
-	return s6_command(ts, S6_SENSE_ON);
+	/* Firmware retains this mask. Do not reconfigure an already enabled
+	 * engine on every wake: configuration is a command, not a plain store.
+	 */
+	if (!(functions & BIT(0))) {
+		buf[0] = S6_FUNCTIONS;
+		buf[1] = functions | BIT(0);
+		ret = i2c_master_send(ts->client, buf, sizeof(buf));
+		if (ret != sizeof(buf))
+			return ret < 0 ? ret : -EIO;
+		err = read_poll_timeout(s6_read, ret, ret || (functions & BIT(0)),
+			20000, 2000000, true, ts, S6_FUNCTIONS_READ, &functions, 1);
+		if (ret || err)
+			return ret ?: err;
+	}
+	/* Consume stale packets before enabling IRQ instead of placing another
+	 * asynchronous CLEAR command immediately ahead of SENSE_ON. Stale
+	 * contacts must not be reported as fresh input after a display wake.
+	 */
+	for (i = 0; i < S6_DRAIN_LIMIT; i++) {
+		ret = s6_read(ts, S6_EVENT, event, sizeof(event));
+		if (ret)
+			return ret;
+		if (!event[0])
+			return s6_command(ts, S6_SENSE_ON);
+	}
+	return -EOVERFLOW;
 }
 
 /* Poll command completion only during a transition, never as a watchdog. */
@@ -105,7 +121,7 @@ static int s6_wait_scan(struct s6d6ft0 *ts, bool enabled)
 
 	err = read_poll_timeout(s6_read, ret,
 		ret || ((state[1] == S6_MODE_TOUCH) == enabled),
-		1000, 100000, true, ts, S6_STATUS, state, sizeof(state));
+		20000, 2000000, true, ts, S6_STATUS, state, sizeof(state));
 	if (ret || err)
 		dev_err(&ts->client->dev, "scan %s did not complete: %*ph (%d)\n",
 			enabled ? "start" : "stop", 4, state, ret ?: err);
